@@ -14,3 +14,4 @@
 .sidebar.collapsed nav button{justify-content:center;padding:10px;gap:0}
 .sidebar.collapsed .profile{display:flex;justify-content:center}
 @media(max-width:850px){.app-shell.sidebar-collapsed{grid-template-columns:1fr}.sidebar-toggle{display:none}.sidebar.collapsed>.brand,.sidebar.collapsed .sidebar-label,.sidebar.collapsed .sidebar-city,.sidebar.collapsed .nav-label,.sidebar.collapsed .nav-count,.sidebar.collapsed .profile>span:nth-child(2),.sidebar.collapsed .profile>svg{display:initial}.sidebar.collapsed{padding:18px 22px 12px}.sidebar.collapsed nav{margin-top:20px}.sidebar.collapsed nav button{justify-content:flex-start;padding:10px;gap:11px}.sidebar.collapsed .profile{display:grid}}
+.lead-filter-hint{margin:12px 24px 0;font-size:12px}

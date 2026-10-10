@@ -9,8 +9,8 @@ export type DiscoveryRequest = {
 };
 type Position = { latitude: number; longitude: number; accuracy: number; capturedAt: number };
 
-export function DiscoveryForm({ busy, hasStrategy, onDiscover }: {
-  busy: boolean; hasStrategy: boolean; onDiscover: (request: DiscoveryRequest) => Promise<void>;
+export function DiscoveryForm({ busy, hasStrategy, demoMode, onDiscover }: {
+  busy: boolean; hasStrategy: boolean; demoMode: boolean; onDiscover: (request: DiscoveryRequest) => Promise<void>;
 }) {
   const [source, setSource] = useState<"manual" | "browser">("manual");
   const [position, setPosition] = useState<Position | null>(null);
@@ -67,7 +67,7 @@ export function DiscoveryForm({ busy, hasStrategy, onDiscover }: {
   return <section className="panel">
     <div className="panel-head"><div><p className="eyebrow">START WITH YOUR NEIGHBOURHOOD</p><h2>Who would you like to meet?</h2></div><MapPin size={26} aria-hidden="true" /></div>
     <form className="panel-body discovery-form" onSubmit={submit}>
-      <label>Business categories<input name="keywords" required maxLength={2000} defaultValue="hair salon, dental clinic" placeholder="Comma-separated categories" /><small>Search Google Maps live, with up to 20 categories in one job.</small></label>
+      <label>Business categories<input name="keywords" required maxLength={2000} defaultValue="hair salon, dental clinic" placeholder="Comma-separated categories" /><small>{demoMode ? "Demo mode creates three synthetic businesses for the first category. No live Maps search runs." : "Search Google Maps live, with up to 20 categories in one job."}</small></label>
       <div className="location-picker">
         <div className="location-heading"><div><strong>Start close to home.</strong><p>Share your device location to find businesses nearby.</p></div>
           <button type="button" className="compact" disabled={busy || locating} onClick={locate} aria-describedby="location-privacy">
@@ -98,7 +98,7 @@ export function DiscoveryForm({ busy, hasStrategy, onDiscover }: {
         <p className="muted">{hasStrategy ? "Uses your AI provider credits. New eligible leads go through Scout → Critic → draft. Nothing is sent or called automatically." : "Save your offer in Memory & strategy to enable automatic draft preparation."}</p>
         {prepare && hasStrategy && <label>Maximum drafts for this job<input name="draft_limit" type="number" min={1} max={100} defaultValue={10} required /></label>}
       </div>
-      <div className="form-footer"><p className="muted">Live Maps data + available emails. You approve each outreach.</p><button className="primary" disabled={busy || locating || (source === "browser" && !position)}><MagnifyingGlass aria-hidden="true" />{busy ? "Queuing…" : "Discover businesses"}</button></div>
+      <div className="form-footer"><p className="muted">{demoMode ? "Synthetic examples only. Switch to a configured live deployment for real business results." : "Live Maps data + available emails. You approve each outreach."}</p><button className="primary" disabled={busy || locating || (source === "browser" && !position)}><MagnifyingGlass aria-hidden="true" />{busy ? "Queuing…" : demoMode ? "Create demo businesses" : "Discover businesses"}</button></div>
     </form>
   </section>;
 }

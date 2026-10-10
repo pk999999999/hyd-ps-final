@@ -74,6 +74,8 @@ def stop_reason(text):
     text = text.strip().lower()
     # Ignore quoted mail so the outgoing opt-out footer does not suppress every reply.
     text = re.split(r"(?im)^\s*(?:on .+wrote:|from:|>+|---+|_{3,})", text)[0]
+    if re.search(r"\b(?:spam|scam|harass(?:ing|ment)?|report (?:you|this)|file a complaint)\b", text):
+        return "complaint"
     if re.search(r"\b(?:unsubscribe|opt[ -]?out|not interested|no thanks|no thank you|remove me|do not contact|don['’]?t contact|stop (?:emailing|messaging|contacting|sending))\b", text):
         return "not_interested" if "not interested" in text or "no thank" in text else "opted_out"
     if re.match(r"^\s*(?:stop|unsubscribe)[.!\s]*$", text):
@@ -91,6 +93,7 @@ async def is_suppressed(db, lead):
     if not contacts:
         return False
     return bool(await db.scalar(select(ContactSuppression.id).where(
+        ContactSuppression.user_id == lead.user_id,
         ContactSuppression.address.in_(contacts)).limit(1)))
 
 
@@ -119,6 +122,12 @@ async def suppress_contact(db, lead, reason):
         if other.id == lead.id or other_contacts.intersection(address for _, address in contacts):
             other.opted_out = True
             other.status = "opted_out"
+            from app.models.models import ContactPermission
+            permissions = (await db.scalars(select(ContactPermission).where(
+                ContactPermission.user_id == lead.user_id, ContactPermission.lead_id == other.id,
+                ContactPermission.revoked_at.is_(None)))).all()
+            for permission in permissions:
+                permission.revoked_at = datetime.now(timezone.utc)
             reminders = (await db.scalars(select(Followup).where(Followup.lead_id == other.id, Followup.status == "scheduled"))).all()
             for reminder in reminders:
                 reminder.status = "cancelled"
@@ -141,14 +150,23 @@ async def publish(user_id, event, record_id):
 
 
 async def classify_reply(db, memory, message):
-    reason = stop_reason(message.body)
-    if reason:
+    from app.agents.conversation_graph import build_conversation_graph
+
+    async def detect_stop(_state):
+        return {"stop_reason": stop_reason(message.body) or ""}
+
+    async def suppress(state):
+        reason = state["stop_reason"]
         lead = await db.get(Lead, message.lead_id)
         await suppress_contact(db, lead, reason)
         message.classification = reason
-        message.status = "suppressed"
+        message.status = "needs_review" if reason == "complaint" else "suppressed"
         message.draft_response = ""
-    elif message.direction == "inbound":
+        return {"classification": reason}
+
+    async def analyze(_state):
+        if message.direction != "inbound":
+            return {"classification": message.classification}
         from app.models.models import ScheduledEvent
         from app.services.calendar_service import analyze_reply_and_scheduling, format_slot_ist, suggest_upcoming_slots
 
@@ -207,6 +225,11 @@ async def classify_reply(db, memory, message):
             message.status = "needs_review"
             if analysis.get("suggested_reply"):
                 message.draft_response = analysis["suggested_reply"]
+        return {"classification": message.classification}
+
+    graph = build_conversation_graph(detect_stop, suppress, analyze)
+    await graph.ainvoke({"message_id": str(message.id), "body": message.body,
+                         "direction": message.direction})
     await db.commit()
     lead = await db.get(Lead, message.lead_id)
     await memory.db["idea_outcomes"].update_one({"_id": f"reply-outcome:{message.id}"}, {"$set": {

@@ -1,6 +1,7 @@
 """Database connection setup for PostgreSQL (async), MongoDB, and Redis."""
 
 import logging
+from pathlib import Path
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy import text, inspect
@@ -42,17 +43,23 @@ async def get_db() -> AsyncSession:
 
 
 async def create_tables():
-    """Ensure PostgreSQL tables exist on startup."""
+    """Apply versioned SQL schema upgrades before serving or processing work."""
     try:
-        from app.models.models import User, Lead, Job, SendLog, WorkItem
+        from app.models import models  # noqa: F401
+        from alembic import command
+        from alembic.config import Config
         async with engine.begin() as conn:
             if engine.dialect.name == "postgresql":
                 await conn.execute(text("SELECT pg_advisory_xact_lock(8147821)"))
-            await conn.run_sync(Base.metadata.create_all)
-            await conn.run_sync(_upgrade_existing_tables)
-        logger.info("PostgreSQL tables checked / created.")
-    except Exception as e:
-        logger.warning("SQL database unavailable on startup (%s)", type(e).__name__)
+            def migrate(sync_conn):
+                config = Config(str(Path(__file__).resolve().parents[2] / "alembic.ini"))
+                config.attributes["connection"] = sync_conn
+                command.upgrade(config, "head")
+            await conn.run_sync(migrate)
+        logger.info("SQL migrations applied.")
+    except Exception:
+        logger.exception("SQL migrations failed; refusing to start with an unknown schema")
+        raise
 
     # Initialize Mongo
     await init_mongo()

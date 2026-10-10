@@ -92,6 +92,10 @@ async def test_approved_email_real_contract_idempotency_and_oneclick(harness, mo
     async with factory() as db:
         lead = await db.get(Lead, uuid.UUID(lead_id))
         lead.status = "approved"
+        lead.draft_body = "Hello"
+        await db.commit()
+        from app.services.compliance_service import record_permission
+        await record_permission(db, lead.user_id, lead.id, "Existing client requested a follow-up email")
         await db.commit()
         assert (await EmailService(db).send_outreach_email(lead.user_id, lead, "Hello", "Hello", "Hello"))[0]
         assert not (await EmailService(db).send_outreach_email(lead.user_id, lead, "Hello", "Hello", "Hello"))[0]
@@ -230,8 +234,11 @@ async def test_uncertain_provider_send_does_not_retry(harness, monkeypatch):
         raise httpx.ReadTimeout("Network interrupted", request=request)
     monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: original(transport=httpx.MockTransport(timeout), **kwargs))
     async with factory() as db:
-        lead = Lead(user_id=uuid.UUID(auth["user"]["id"]), title="Salon", emails="lead@example.com", outreach_status="approved")
+        lead = Lead(user_id=uuid.UUID(auth["user"]["id"]), title="Salon", emails="lead@example.com", outreach_status="approved", draft_body="Hello")
         db.add(lead); await db.commit()
+        from app.services.compliance_service import record_permission
+        await record_permission(db, lead.user_id, lead.id, "Existing client requested a follow-up email")
+        await db.commit()
         ok, detail = await EmailService(db).send_outreach_email(lead.user_id, lead, "Hello", "Hello", "Hello")
         assert not ok and "uncertain" in detail
         assert not (await EmailService(db).send_outreach_email(lead.user_id, lead, "Hello", "Hello", "Hello"))[0]

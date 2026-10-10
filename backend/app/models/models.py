@@ -85,6 +85,9 @@ class Lead(Base):
     draft_subject = Column(String(500), default="")
     draft_body = Column(Text, default="")
     raw_data = Column(JSON, default=dict)
+    lead_score = Column(Integer, default=0, nullable=False)
+    lead_score_factors = Column(JSON, default=dict, nullable=False)
+    research_status = Column(String(30), default="pending", nullable=False)
 
     created_at = Column(DateTime(timezone=True), default=utcnow)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
@@ -221,6 +224,32 @@ class ContactSuppression(Base):
     __table_args__ = (UniqueConstraint("user_id", "channel", "address"),)
 
 
+class ContactPermission(Base):
+    """Operator-recorded contact basis; a public listing is never permission."""
+    __tablename__ = "contact_permissions"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+    lead_id = Column(UUID(as_uuid=True), ForeignKey("leads.id"), nullable=False, index=True)
+    channel = Column(String(20), nullable=False)
+    basis = Column(Text, nullable=False)
+    recorded_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+    __table_args__ = (UniqueConstraint("user_id", "lead_id", "channel"),)
+
+
+class ComplianceDecision(Base):
+    __tablename__ = "compliance_decisions"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+    lead_id = Column(UUID(as_uuid=True), ForeignKey("leads.id"), nullable=False, index=True)
+    channel = Column(String(20), nullable=False)
+    message_type = Column(String(20), nullable=False)
+    decision = Column(String(20), nullable=False)
+    reason_codes = Column(JSON, default=list, nullable=False)
+    policy_version = Column(String(20), nullable=False, default="2026-10-v1")
+    checked_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
 class Communication(Base):
     __tablename__ = "communications"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -305,6 +334,49 @@ class CampaignLead(Base):
     __tablename__ = "campaign_leads"
     campaign_id = Column(UUID(as_uuid=True), ForeignKey("campaigns.id"), primary_key=True)
     lead_id = Column(UUID(as_uuid=True), ForeignKey("leads.id"), primary_key=True)
+
+
+class LeadEvidence(Base):
+    """One source-attributed observation; suggestions never masquerade as facts."""
+    __tablename__ = "lead_evidence"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    lead_id = Column(UUID(as_uuid=True), ForeignKey("leads.id"), nullable=False, index=True)
+    source_kind = Column(String(30), nullable=False)
+    source_key = Column(String(64), nullable=False)
+    source_url = Column(String(1000), default="", nullable=False)
+    title = Column(String(500), default="", nullable=False)
+    excerpt = Column(Text, default="", nullable=False)
+    confidence = Column(String(20), default="observed", nullable=False)
+    observed_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
+    __table_args__ = (UniqueConstraint("lead_id", "source_key"),)
+
+
+class ResearchRun(Base):
+    __tablename__ = "research_runs"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+    lead_id = Column(UUID(as_uuid=True), ForeignKey("leads.id"), nullable=False, index=True)
+    status = Column(String(30), nullable=False, default="running")
+    sources_found = Column(Integer, default=0, nullable=False)
+    started_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class LeadIdea(Base):
+    __tablename__ = "lead_ideas"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    lead_id = Column(UUID(as_uuid=True), ForeignKey("leads.id"), nullable=False, index=True)
+    evidence_id = Column(UUID(as_uuid=True), ForeignKey("lead_evidence.id"), nullable=True)
+    hook_name = Column(String(500), nullable=False)
+    problem = Column(Text, default="", nullable=False)
+    pitch = Column(Text, default="", nullable=False)
+    potential_benefit = Column(Text, default="", nullable=False)
+    uncertainty = Column(Text, default="", nullable=False)
+    implementation = Column(Text, default="", nullable=False)
+    suggested_cta = Column(Text, default="", nullable=False)
+    confidence = Column(String(30), default="hypothesis", nullable=False)
+    status = Column(String(20), default="proposed", nullable=False)
+    created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
 
 
 class Meeting(Base):

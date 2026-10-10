@@ -3,6 +3,7 @@
 import uuid
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, Field
 from fastapi.responses import HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, func
@@ -11,7 +12,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.core.database import get_db, get_mongo_db
 from app.core.security import get_operator_user as get_current_user, create_invitation
 from app.core.config import get_settings
-from app.models.models import User, Lead, Job, CampaignLead
+from app.models.models import User, Lead, Job, CampaignLead, LeadEvidence, LeadIdea, ResearchRun, WorkItem
 from app.schemas.schemas import LeadResponse, DecisionRequest, DecisionResponse
 from app.agents.orchestrator import Orchestrator
 from app.services.memory_service import MemoryService
@@ -59,6 +60,72 @@ async def get_lead(
     return LeadResponse.model_validate(lead)
 
 
+@router.get("/{lead_id}/research")
+async def lead_research(lead_id: uuid.UUID, current_user: User = Depends(get_current_user),
+                        db: AsyncSession = Depends(get_db)):
+    lead = await db.get(Lead, lead_id)
+    if not lead or lead.user_id != current_user.id:
+        raise HTTPException(404, "Lead not found.")
+    evidence = (await db.scalars(select(LeadEvidence).where(LeadEvidence.lead_id == lead.id)
+                .order_by(LeadEvidence.observed_at.desc()))).all()
+    ideas = (await db.scalars(select(LeadIdea).where(LeadIdea.lead_id == lead.id)
+             .order_by(LeadIdea.created_at.desc()))).all()
+    runs = (await db.scalars(select(ResearchRun).where(ResearchRun.lead_id == lead.id)
+            .order_by(ResearchRun.started_at.desc()).limit(10))).all()
+    from app.services.compliance_service import has_permission
+    return {"lead_id": str(lead.id), "score": lead.lead_score,
+            "contact_permission_recorded": await has_permission(db, current_user.id, lead.id),
+            "score_factors": lead.lead_score_factors or {},
+            "research_runs": [{"id": str(run.id), "status": run.status,
+                "sources_found": run.sources_found, "started_at": run.started_at,
+                "completed_at": run.completed_at} for run in runs],
+            "research_status": lead.research_status,
+            "evidence": [{"id": str(item.id), "source_kind": item.source_kind,
+                "source_url": item.source_url, "title": item.title, "excerpt": item.excerpt,
+                "confidence": item.confidence, "observed_at": item.observed_at} for item in evidence],
+            "ideas": [{"id": str(item.id), "evidence_id": str(item.evidence_id) if item.evidence_id else None,
+                "hook_name": item.hook_name, "problem": item.problem, "pitch": item.pitch,
+                "potential_benefit": item.potential_benefit, "uncertainty": item.uncertainty,
+                "implementation": item.implementation, "suggested_cta": item.suggested_cta,
+                "confidence": item.confidence,
+                "status": item.status} for item in ideas]}
+
+
+@router.post("/{lead_id}/research", status_code=202)
+async def queue_lead_research(lead_id: uuid.UUID, current_user: User = Depends(get_current_user),
+                              db: AsyncSession = Depends(get_db)):
+    lead = await db.get(Lead, lead_id)
+    if not lead or lead.user_id != current_user.id:
+        raise HTTPException(404, "Lead not found.")
+    if lead.research_status == "queued":
+        return {"status": "queued"}
+    lead.research_status = "queued"
+    db.add(WorkItem(user_id=current_user.id, kind="research", payload={"lead_id": str(lead.id)}))
+    await db.commit()
+    return {"status": "queued"}
+
+
+class PermissionRequest(BaseModel):
+    basis: str = Field(min_length=10, max_length=1000)
+
+
+@router.post("/{lead_id}/permission")
+async def record_lead_permission(lead_id: uuid.UUID, payload: PermissionRequest,
+                                 current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    lead = await db.get(Lead, lead_id)
+    if not lead or lead.user_id != current_user.id:
+        raise HTTPException(404, "Lead not found.")
+    if lead.opted_out:
+        raise HTTPException(409, "This contact opted out; permission cannot be recorded here.")
+    from app.services.compliance_service import record_permission
+    try:
+        await record_permission(db, current_user.id, lead.id, payload.basis)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    await db.commit()
+    return {"recorded": True}
+
+
 @router.post("/{lead_id}/pipeline")
 async def trigger_pipeline_for_lead(
     lead_id: uuid.UUID,
@@ -101,6 +168,16 @@ async def submit_human_decision(
         raise HTTPException(status_code=404, detail="Lead not found.")
     if lead.status not in ("drafted", "approved") or not lead.draft_body:
         raise HTTPException(409, "Create a draft before making an approval decision.")
+    if payload.send_email and payload.action != "rejected" and get_settings().email_provider == "resend":
+        from app.services.compliance_service import has_permission, record_permission
+        if payload.permission_basis.strip():
+            try:
+                await record_permission(db, current_user.id, lead.id, payload.permission_basis)
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from exc
+            await db.commit()
+        elif not await has_permission(db, current_user.id, lead.id):
+            raise HTTPException(422, "Record the basis for permission to email this contact before sending.")
 
     memory_svc = MemoryService(mongo)
     orchestrator = Orchestrator(db, memory_svc)

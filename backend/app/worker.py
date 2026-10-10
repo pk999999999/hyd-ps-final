@@ -49,9 +49,20 @@ async def process_work(item_id):
                 return
             if item.kind == "campaign_plan":
                 from app.agents.campaign_agent import plan_campaign
+                from app.agents.campaign_graph import build_campaign_graph
                 if not campaign or campaign.user_id != item.user_id:
                     raise ValueError("Campaign not found")
-                await plan_campaign(db, campaign)
+                async def plan(_state):
+                    await plan_campaign(db, campaign)
+                    return {"phase": "planned"}
+                async def validate(_state):
+                    if not campaign.plan or not campaign.plan.get("keywords"):
+                        raise ValueError("Campaign planning produced no valid searches.")
+                    return {"plan_valid": True}
+                async def passthrough(_state):
+                    return {}
+                await build_campaign_graph(plan, validate, passthrough, passthrough, passthrough).ainvoke(
+                    {"campaign_id": str(campaign.id), "phase": "plan"})
             elif item.kind == "draft":
                 lead = await db.get(Lead, uuid.UUID(item.payload["lead_id"]))
                 user = await db.get(User, item.user_id)
@@ -62,17 +73,48 @@ async def process_work(item_id):
                     await db.commit()
                     await Orchestrator(db, MemoryService(await get_mongo_db())).run_pipeline_to_checkpoint(user, lead)
                     await publish(str(user.id), "draft_ready", str(lead.id))
+            elif item.kind == "research":
+                from app.services.research_service import research_lead
+                lead = await db.get(Lead, uuid.UUID(item.payload["lead_id"]))
+                if not lead or lead.user_id != item.user_id:
+                    raise ValueError("The requested lead no longer exists.")
+                await research_lead(db, lead, force=True)
+                await db.commit()
+                await publish(str(item.user_id), "research_ready", str(lead.id))
             elif item.kind == "scrape":
+                from app.agents.campaign_graph import build_campaign_graph
                 job = await db.get(Job, uuid.UUID(item.payload["job_id"]))
                 if not job or job.user_id != item.user_id:
                     raise ValueError("The requested scrape job no longer exists.")
-                scraper = ScraperService(db)
-                if not job.scraper_job_id:
-                    await scraper.dispatch(job)
-                state = await scraper.poll(job)
+                async def dispatch(_state):
+                    scraper = ScraperService(db)
+                    if not job.scraper_job_id:
+                        await scraper.dispatch(job)
+                    return {"job_id": str(job.id)}
+                async def poll(_state):
+                    return {"scrape_status": await ScraperService(db).poll(job), "lead_count": job.lead_count or 0}
+                async def finalize(state):
+                    if campaign and state["lead_count"] == 0:
+                        campaign.status = "insufficient_leads"
+                        await db.commit()
+                    return {"outcome": "insufficient_leads" if state["lead_count"] == 0 else "leads_imported"}
+                async def passthrough(_state):
+                    return {}
+                result = await build_campaign_graph(passthrough, passthrough, dispatch, poll, finalize).ainvoke(
+                    {"job_id": str(job.id), "phase": "discover"})
+                state = result["scrape_status"]
                 if state == "failed":
                     raise ValueError(job.error_message)
                 if state != "completed":
+                    if item.attempts >= 60:
+                        job.status = "failed"
+                        job.error_message = "Discovery exceeded 15 minutes of polling. Check the scraper job before retrying."
+                        item.status = "failed"
+                        item.error_message = job.error_message
+                        item.leased_until = None
+                        await db.commit()
+                        await publish(str(item.user_id), "task_failed", str(item.id))
+                        return
                     item.status = "pending"
                     item.available_at = datetime.now(timezone.utc) + timedelta(seconds=15)
                     item.leased_until = None
@@ -119,24 +161,32 @@ async def process_work(item_id):
         except Exception as exc:
             await db.rollback()
             item = await db.get(WorkItem, item_id)
+            from app.services.model_provider import ProviderError
             retry_webhook = item.kind == "resend_event" and item.attempts < 3
-            item.status = "pending" if retry_webhook else "failed"
-            if retry_webhook:
+            retry_provider = (item.kind in {"campaign_plan", "draft"} and item.attempts < 3
+                              and isinstance(exc, ProviderError)
+                              and any(word in str(exc).lower() for word in ("timed out", "rate limit", "unavailable")))
+            retry = retry_webhook or retry_provider
+            item.status = "pending" if retry else "failed"
+            if retry:
                 item.available_at = datetime.now(timezone.utc) + timedelta(seconds=30 * 2 ** (item.attempts - 1))
-            from app.agents.scout_agent import ProviderError
             item.error_message = str(exc) if isinstance(exc, ProviderError) else f"{type(exc).__name__}: Task failed; verify provider and database connectivity, then retry."
             item.leased_until = None
             if item.kind == "draft":
                 lead = await db.get(Lead, uuid.UUID(item.payload["lead_id"]))
                 if lead and not lead.opted_out and lead.status not in ("contacted", "replied"):
-                    lead.status = "draft_failed"
+                    lead.status = "queued" if retry else "draft_failed"
+            elif item.kind == "research":
+                lead = await db.get(Lead, uuid.UUID(item.payload["lead_id"]))
+                if lead:
+                    lead.research_status = "failed"
             elif item.kind == "scrape":
                 job = await db.get(Job, uuid.UUID(item.payload["job_id"]))
                 if job:
                     job.status = "failed"
                     job.error_message = item.error_message
             await db.commit()
-            await publish(str(item.user_id), "task_failed", str(item.id))
+            await publish(str(item.user_id), "task_retrying" if retry else "task_failed", str(item.id))
             logger.warning("Task %s failed (%s)", item_id, type(exc).__name__)
 
 

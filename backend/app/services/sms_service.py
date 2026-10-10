@@ -1,14 +1,13 @@
 """Approval-only SMS replies sent through the operator's Textbee Android gateway."""
-from datetime import datetime, timezone
 import uuid
 
 import httpx
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.models.models import Lead, SendLog, User
-from app.services.communication_service import is_suppressed, normalize_phone
+from app.services.communication_service import normalize_phone
 
 
 class TextbeeSMSService:
@@ -18,34 +17,18 @@ class TextbeeSMSService:
         self.session = db_session
         self.settings = get_settings()
 
-    async def _sent_today(self, user_id: uuid.UUID) -> int:
-        day_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-        return (await self.session.scalar(select(func.count(SendLog.id)).where(
-            SendLog.user_id == user_id,
-            SendLog.channel == "sms",
-            SendLog.status != "failed",
-            SendLog.sent_at >= day_start,
-        ))) or 0
-
     async def send_reply(self, user_id: uuid.UUID, lead: Lead, body: str, message_id: uuid.UUID) -> tuple[bool, str]:
         """Queue a human-approved reply. A timeout is never retried automatically."""
-        if not self.settings.sms_enabled:
-            return False, "SMS is disabled. Pair the Android Textbee device, configure its webhook, then enable SMS_ENABLED."
-        if not self.settings.textbee_api_key:
-            return False, "TEXTBEE_API_KEY is not configured."
-        recipient = normalize_phone(lead.phone)
-        if not recipient:
-            return False, "This business has no valid phone number in international format."
-
         # Lock by operator to make the cap, the opt-out check and reservation race-safe.
         await self.session.execute(select(User.id).where(User.id == user_id).with_for_update())
         await self.session.refresh(lead)
-        if lead.user_id != user_id:
-            return False, "Lead not found."
-        if await is_suppressed(self.session, lead):
-            return False, "This contact opted out. No SMS reply is allowed."
-        if await self._sent_today(user_id) >= self.settings.daily_sms_cap:
-            return False, f"Daily SMS limit of {self.settings.daily_sms_cap} reached."
+        from app.services.compliance_service import evaluate_outbound
+        decision = await evaluate_outbound(self.session, user_id, lead, channel="sms",
+            message_type="reply", body=body, message_id=message_id)
+        if decision.decision != "allow":
+            await self.session.commit()
+            return False, "Compliance blocked this SMS: " + ", ".join(decision.reason_codes)
+        recipient = normalize_phone(lead.phone)
 
         key = f"sms-reply/{user_id}/{message_id}/v1"
         existing = await self.session.scalar(select(SendLog).where(SendLog.idempotency_key == key))

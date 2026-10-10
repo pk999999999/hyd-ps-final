@@ -6,8 +6,7 @@ import uuid
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
-from pydantic import TypeAdapter, EmailStr, ValidationError
-from app.models.models import SendLog, Lead, User, Communication, Job, Campaign
+from app.models.models import SendLog, Lead, User, Communication
 from app.core.config import get_settings
 from app.services.communication_service import is_suppressed, reply_address
 
@@ -78,24 +77,20 @@ class EmailService:
         attachments: list[dict] | None = None,
     ) -> tuple[bool, str]:
         """Sends email via Resend with mandatory opt-out footer and registers send log."""
-        if settings.email_provider == "resend" and not settings.email_enabled:
-            return False, "Email sending is disabled. Verify a Resend sending domain and enable EMAIL_ENABLED first."
-        if settings.email_provider == "resend" and not self.api_key:
-            return False, "RESEND_API_KEY is not configured."
-        try:
-            TypeAdapter(EmailStr).validate_python(lead.email)
-        except ValidationError:
-            return False, "The lead's email address is invalid."
         # Serialize cap checks and dispatch reservations per operator across replicas.
         await self.session.execute(select(User.id).where(User.id == user_id).with_for_update())
         # Re-read after acquiring the operator lock so a prior opt-out cannot be missed.
         await self.session.refresh(lead)
-        job = await self.session.get(Job, lead.job_id) if lead.job_id else None
-        campaign = await self.session.get(Campaign, job.campaign_id) if job and job.campaign_id else None
-        if campaign and campaign.paused:
-            return False, "This campaign is paused. Resume it before sending."
+        from app.services.compliance_service import evaluate_outbound
+        decision = await evaluate_outbound(self.session, user_id, lead, channel="email",
+            message_type="reply" if message_id else "outreach", subject=subject, body=body_text,
+            message_id=message_id)
+        if decision.decision != "allow":
+            await self.session.commit()
+            return False, "Compliance blocked this email: " + ", ".join(decision.reason_codes)
         can_proceed, reason = await self.can_send(user_id, lead.id, message_id)
         if not can_proceed:
+            await self.session.commit()
             return False, reason
 
         # Mandated Anti-Spam / Opt-out footer

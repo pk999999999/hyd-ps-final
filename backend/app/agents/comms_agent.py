@@ -4,6 +4,7 @@ import logging
 from typing import Dict, Any, List
 from app.agents.state import LeadWorkflowState
 from app.agents.scout_agent import call_llm, ProviderError
+from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +17,14 @@ async def draft_outreach_email(state: LeadWorkflowState) -> Dict[str, Any]:
     pitch = selected_idea.get("pitch", f"automate customer inquiries for {business}")
     style_rules = state.get("style_rules") or []
     few_shots = state.get("few_shot_examples") or []
+
+    if get_settings().demo_mode:
+        return {"draft_subject": f"[Demo] An idea for {business}",
+            "draft_body": (f"Hi {business} team,\n\nThis is an AI-assisted sample message for a fictional business. "
+                f"We could discuss whether {state['service_offered']} might help your customer inquiries. "
+                "This is a hypothesis, not a finding about your business. "
+                "If this were a real message, you could reply STOP to opt out.\n\nDemo Growth Desk"),
+            "awaiting_human_approval": True, "current_step": "awaiting_approval"}
 
     system_prompt = (
         "You are an outreach specialist writing cold emails to local business owners. "

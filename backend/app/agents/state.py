@@ -19,6 +19,8 @@ class LeadWorkflowState(TypedDict):
     review_count: Optional[int]
     address: Optional[str]
     raw_data: Optional[Dict[str, Any]]
+    evidence: List[Dict[str, Any]]
+    lead_score: int
     
     # Learned memory & context
     style_rules: List[str]

@@ -7,7 +7,7 @@ from pydantic import Field
 from sqlalchemy import select, func
 from app.core.database import get_db
 from app.core.security import get_operator_user
-from app.models.models import Campaign, Job, Lead, WorkItem, User, CampaignLead
+from app.models.models import Campaign, Job, Lead, WorkItem, User, CampaignLead, LeadIdea
 from app.schemas.schemas import OnboardingRequest
 
 router = APIRouter(tags=["Campaign Orchestrator"])
@@ -45,8 +45,10 @@ async def campaigns(user=Depends(get_operator_user), db=Depends(get_db)):
         counts = dict((await db.execute(select(Lead.outreach_status, func.count(Lead.id))
             .join(CampaignLead, CampaignLead.lead_id == Lead.id).where(CampaignLead.campaign_id == row.id).group_by(Lead.outreach_status))).all())
         status = row.status
-        if jobs and all(job.status == "completed" for job in jobs):
+        if jobs and all(job.status == "completed" for job in jobs) and not all(job.lead_count == 0 for job in jobs):
             status = "preparing_ideas" if counts.get("queued", 0) + counts.get("processing", 0) else "ready_for_review"
+        elif jobs and all(job.status == "completed" and job.lead_count == 0 for job in jobs):
+            status = "insufficient_leads"
         if any(job.status == "failed" for job in jobs):
             status = "needs_attention"
         result.append({"id": str(row.id), "service_description": row.service_description,
@@ -54,6 +56,41 @@ async def campaigns(user=Depends(get_operator_user), db=Depends(get_db)):
             "counts": counts, "total": sum(counts.values()), "job_ids": [str(job.id) for job in jobs],
             "created_at": row.created_at})
     return result
+
+
+@router.get("/campaigns/{campaign_id}")
+async def campaign_detail(campaign_id: uuid.UUID, user=Depends(get_operator_user), db=Depends(get_db)):
+    campaign = await db.scalar(select(Campaign).where(Campaign.id == campaign_id, Campaign.user_id == user.id))
+    if not campaign:
+        raise HTTPException(404, "Campaign not found.")
+    jobs = (await db.scalars(select(Job).where(Job.campaign_id == campaign.id))).all()
+    work = (await db.scalars(select(WorkItem).where(WorkItem.user_id == user.id)
+            .order_by(WorkItem.created_at).limit(500))).all()
+    work = [item for item in work if item.payload and item.payload.get("campaign_id") == str(campaign.id)]
+    lead_ids = select(CampaignLead.lead_id).where(CampaignLead.campaign_id == campaign.id)
+    counts = dict((await db.execute(select(Lead.outreach_status, func.count(Lead.id))
+        .where(Lead.id.in_(lead_ids)).group_by(Lead.outreach_status))).all())
+    researched = await db.scalar(select(func.count(Lead.id)).where(
+        Lead.id.in_(lead_ids), Lead.research_status == "researched")) or 0
+    ideas = await db.scalar(select(func.count(LeadIdea.id)).where(LeadIdea.lead_id.in_(lead_ids))) or 0
+    status = campaign.status
+    if jobs and all(job.status == "completed" for job in jobs) and not all(job.lead_count == 0 for job in jobs):
+        status = "preparing_ideas" if counts.get("queued", 0) + counts.get("processing", 0) else "ready_for_review"
+    elif jobs and all(job.status == "completed" and job.lead_count == 0 for job in jobs):
+        status = "insufficient_leads"
+    if any(job.status == "failed" for job in jobs):
+        status = "needs_attention"
+    return {"id": str(campaign.id), "status": status, "paused": campaign.paused,
+            "service_description": campaign.service_description, "target_clients": campaign.target_clients,
+            "counts": counts, "leads_discovered": sum(counts.values()),
+            "research_completed": researched, "ideas_generated": ideas,
+            "awaiting_approval": counts.get("drafted", 0) + counts.get("approved", 0),
+            "plan": campaign.plan, "timeline": [
+                {"id": str(item.id), "kind": item.kind, "status": item.status,
+                 "at": item.created_at, "completed_at": item.completed_at,
+                 "error_message": item.error_message} for item in work],
+            "jobs": [{"id": str(job.id), "status": job.status, "lead_count": job.lead_count,
+                      "error_message": job.error_message} for job in jobs]}
 
 
 @router.post("/campaigns/{campaign_id}/{action}")

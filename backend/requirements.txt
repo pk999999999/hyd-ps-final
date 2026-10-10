@@ -24,9 +24,13 @@ redis==5.1.0
 
 # HTTP
 httpx==0.27.0
-aiohttp==3.10.0
 
 # Validation
 pydantic==2.9.0
 pydantic-settings==2.5.0
 email-validator==2.2.0
+
+# Durable lead workflow checkpoints (PostgreSQL in deployment)
+langgraph==1.0.10
+langgraph-checkpoint-postgres==3.0.4
+psycopg[binary]==3.3.2

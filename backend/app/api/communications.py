@@ -39,6 +39,7 @@ async def queue_approved_outreach(payload: OutreachBatch, user=Depends(get_opera
     await db.execute(select(User.id).where(User.id == user.id).with_for_update())
     queued, skipped = [], []
     from app.services.communication_service import is_suppressed
+    from app.services.compliance_service import has_permission
     for lead_id in dict.fromkeys(payload.lead_ids):
         lead = await db.get(Lead, lead_id)
         reason = None
@@ -48,6 +49,8 @@ async def queue_approved_outreach(payload: OutreachBatch, user=Depends(get_opera
             reason = "An approved outreach draft is required."
         elif not lead.email or await is_suppressed(db, lead):
             reason = "No email address or contact is suppressed."
+        elif get_settings().email_provider == "resend" and not await has_permission(db, user.id, lead.id):
+            reason = "Record the basis for permission to email this contact."
         elif await db.scalar(select(SendLog.id).where(SendLog.lead_id == lead_id,
                 SendLog.message_type == "outreach", SendLog.status != "failed").limit(1)):
             reason = "Outreach already reserved or sent."
@@ -72,7 +75,7 @@ async def interested_businesses(user=Depends(get_operator_user), db=Depends(get_
     """Actual interested responses only, scoped to the operator, not predicted conversions."""
     rows = (await db.execute(select(Communication, Lead).join(Lead, Lead.id == Communication.lead_id).where(
         Communication.user_id == user.id, Communication.direction == "inbound",
-        Communication.classification.in_(("interested", "callback")), Lead.opted_out.is_(False))
+        Communication.classification.in_(("interested", "callback", "schedule_inquiry")), Lead.opted_out.is_(False))
         .order_by(Communication.created_at.desc()).limit(100))).all()
     return [{"lead_id": str(lead.id), "message_id": str(message.id), "business_name": lead.title,
         "address": lead.address, "latitude": lead.latitude, "longitude": lead.longitude,
@@ -281,8 +284,8 @@ async def receive_resend(request: Request, db=Depends(get_db)):
 @router.post("/communications/simulate-reply", status_code=202)
 async def simulate_reply(payload: dict, user=Depends(get_operator_user), db=Depends(get_db)):
     """Accept Resend-shaped inbound events in dry-run only, with tenant ownership checks."""
-    if get_settings().email_provider != "smtp" or get_settings().app_env != "development":
-        raise HTTPException(403, "Reply simulation is available only in development dry-run mode.")
+    if get_settings().email_provider != "smtp" or get_settings().app_env not in ("development", "demo"):
+        raise HTTPException(403, "Reply simulation is available only in local dry-run or demo mode.")
     data = payload.get("data")
     if payload.get("type") != "email.received" or not isinstance(data, dict):
         raise HTTPException(422, "Expected an email.received event with a data object.")

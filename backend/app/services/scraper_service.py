@@ -3,11 +3,43 @@ import csv
 import io
 import json
 import math
+import asyncio
 from datetime import datetime, timezone
 import httpx
 from sqlalchemy import select, or_, and_
 from app.models.models import Lead, Job, User, WorkItem, CampaignLead
 from app.core.config import get_settings
+
+GEOCODER_URL = "https://nominatim.openstreetmap.org/search"
+GEOCODER_USER_AGENT = "hyd-ps2/1.0 (https://github.com/atharv20s/hyd)"
+_geocode_lock = asyncio.Lock()
+_last_geocode_at = 0.0
+
+
+async def geocode_city(city: str) -> tuple[str, str]:
+    """Resolve a campaign city before submitting the scraper's required coordinates."""
+    global _last_geocode_at
+    if not city or len(city) > 255:
+        raise ValueError("A valid city is required for discovery.")
+    async with _geocode_lock:
+        # Nominatim's public service asks clients to stay below one request per second.
+        loop = asyncio.get_running_loop()
+        await asyncio.sleep(max(0, 1.0 - (loop.time() - _last_geocode_at)))
+        _last_geocode_at = loop.time()
+        async with httpx.AsyncClient(timeout=15) as client:
+            response = await client.get(GEOCODER_URL, params={"format": "json", "limit": 1, "q": city},
+                                        headers={"User-Agent": GEOCODER_USER_AGENT})
+            response.raise_for_status()
+            places = response.json()
+    if not isinstance(places, list) or not places:
+        raise ValueError(f"Could not locate {city!r}. Enter a more specific city or use a browser location.")
+    try:
+        latitude, longitude = float(places[0]["lat"]), float(places[0]["lon"])
+    except (KeyError, TypeError, ValueError, IndexError) as exc:
+        raise ValueError("The geocoder returned invalid coordinates.") from exc
+    if not (math.isfinite(latitude) and math.isfinite(longitude) and -90 <= latitude <= 90 and -180 <= longitude <= 180):
+        raise ValueError("The geocoder returned invalid coordinates.")
+    return str(latitude), str(longitude)
 
 
 def distance_m(lat1, lon1, lat2, lon2):
@@ -92,13 +124,23 @@ class ScraperService:
         return count
 
     async def dispatch(self, job):
+        if get_settings().demo_mode:
+            job.scraper_job_id = f"demo:{job.id}"
+            job.status = "running"
+            job.error_message = None
+            await self.session.commit()
+            return
         keywords = json.loads(job.keywords) if isinstance(job.keywords, str) else job.keywords
         queries = keywords if job.location_source == "browser" else [f"{word} {job.city}".strip() for word in keywords]
+        if not job.latitude or not job.longitude:
+            try:
+                job.latitude, job.longitude = await geocode_city(job.city)
+            except httpx.HTTPError as exc:
+                raise ValueError("City lookup is unavailable. Retry discovery or use a browser location.") from exc
         payload = {"name": f"hyd-{job.id}", "keywords": queries,
                    "lang": "en", "zoom": 15, "depth": job.depth, "email": True, "max_time": 600,
-                   "fast_mode": False, "radius": job.radius_m or 5000}
-        if job.latitude and job.longitude:
-            payload.update(lat=job.latitude, lon=job.longitude)
+                   "fast_mode": False, "radius": job.radius_m or 5000,
+                   "lat": str(job.latitude), "lon": str(job.longitude)}
         async with httpx.AsyncClient(timeout=25) as client:
             response = await client.post(f"{self.base_url}/api/v1/jobs", json=payload)
             response.raise_for_status()
@@ -114,6 +156,9 @@ class ScraperService:
     async def poll(self, job):
         if job.status == "completed":
             return job.status
+        if job.scraper_job_id and job.scraper_job_id.startswith("demo:"):
+            await self._complete_job(job, self._demo_csv(job))
+            return job.status
         async with httpx.AsyncClient(timeout=30) as client:
             response = await client.get(f"{self.base_url}/api/v1/jobs/{job.scraper_job_id}")
             response.raise_for_status()
@@ -122,32 +167,53 @@ class ScraperService:
             if state in ("ok", "completed", "finished"):
                 results = await client.get(f"{self.base_url}/api/v1/jobs/{job.scraper_job_id}/download")
                 results.raise_for_status()
-                # Commit imports, counters and follow-on tasks together. Retrying a
-                # completed job must never reset its counts or enqueue more drafts.
-                await self.session.execute(select(User.id).where(User.id == job.user_id).with_for_update())
-                await self.session.refresh(job, with_for_update=True)
-                if job.status == "completed":
-                    return job.status
-                job.lead_count = await self.ingest_csv(job.user_id, results.content.decode("utf-8-sig", errors="replace"), job.id, location_job=job, commit=False)
-                job.excluded_count = self.excluded_count
-                job.drafts_queued = 0
-                if job.prepare_drafts and self.imported_ids:
-                    user = await self.session.get(User, job.user_id)
-                    if user and user.service_description.strip():
-                        leads = (await self.session.scalars(select(Lead).where(Lead.id.in_(self.imported_ids), Lead.opted_out.is_(False))
-                            .order_by(Lead.created_at, Lead.id).limit(job.draft_limit))).all()
-                        for lead in leads:
-                            lead.status = "queued"
-                            self.session.add(WorkItem(user_id=job.user_id, kind="draft", payload={"lead_id": str(lead.id),
-                                **({"campaign_id": str(job.campaign_id)} if job.campaign_id else {})}))
-                        job.drafts_queued = len(leads)
-                job.status = "completed"
-                job.completed_at = datetime.now(timezone.utc)
-            elif state == "failed":
+                await self._complete_job(job, results.content.decode("utf-8-sig", errors="replace"))
+                return job.status
+            elif state in ("failed", "error", "cancelled", "canceled"):
                 job.status = "failed"
                 job.error_message = "Scraping failed. Try a smaller search or retry later."
             await self.session.commit()
-            if job.status == "completed":
-                from app.services.communication_service import publish
-                await publish(str(job.user_id), "scrape_completed", str(job.id))
             return job.status
+
+    async def _complete_job(self, job, csv_content):
+        # Commit imports, counters and follow-on tasks together. Retrying a
+        # completed job must never reset its counts or enqueue more drafts.
+        await self.session.execute(select(User.id).where(User.id == job.user_id).with_for_update())
+        await self.session.refresh(job, with_for_update=True)
+        if job.status == "completed":
+            return
+        job.lead_count = await self.ingest_csv(job.user_id, csv_content, job.id, location_job=job, commit=False)
+        job.excluded_count = self.excluded_count
+        job.drafts_queued = 0
+        if job.prepare_drafts and self.imported_ids:
+            user = await self.session.get(User, job.user_id)
+            if user and user.service_description.strip():
+                leads = (await self.session.scalars(select(Lead).where(Lead.id.in_(self.imported_ids), Lead.opted_out.is_(False))
+                    .order_by(Lead.created_at, Lead.id).limit(job.draft_limit))).all()
+                for lead in leads:
+                    lead.status = "queued"
+                    self.session.add(WorkItem(user_id=job.user_id, kind="draft", payload={"lead_id": str(lead.id),
+                        **({"campaign_id": str(job.campaign_id)} if job.campaign_id else {})}))
+                job.drafts_queued = len(leads)
+        job.status = "completed"
+        job.completed_at = datetime.now(timezone.utc)
+        await self.session.commit()
+        from app.services.communication_service import publish
+        await publish(str(job.user_id), "scrape_completed", str(job.id))
+
+    @staticmethod
+    def _demo_csv(job):
+        keywords = json.loads(job.keywords) if isinstance(job.keywords, str) else job.keywords
+        category = str((keywords or ["local business"])[0])[:80]
+        city = str(job.city or "Hyderabad")[:80]
+        stream = io.StringIO()
+        writer = csv.DictWriter(stream, fieldnames=["title", "category", "address", "emails", "website",
+            "review_rating", "review_count", "place_id", "latitude", "longitude", "demo_fixture"])
+        writer.writeheader()
+        for number, (rating, reviews) in enumerate(((4.2, 31), (4.5, 68), (4.0, 23)), start=1):
+            writer.writerow({"title": f"[Demo] {category.title()} {number}", "category": category,
+                "address": f"Sample district {number}, {city}", "emails": f"demo{number}@example.com",
+                "website": f"https://example.com/demo-{number}", "review_rating": rating,
+                "review_count": reviews, "place_id": f"demo:{job.id}:{number}",
+                "latitude": job.latitude or "", "longitude": job.longitude or "", "demo_fixture": "true"})
+        return stream.getvalue()

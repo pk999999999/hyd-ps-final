@@ -12,7 +12,9 @@ human-approved AI outreach.
 - Discovery runs the Google Maps scraper with email extraction. CSV import keeps all raw columns, skips duplicates, and preserves opt-outs.
 - **Use my location** requests browser permission on click, captures a fresh position and shows its accuracy. Nearby jobs pass coordinates to the live scraper and exclude businesses outside the selected 0.5–50 km radius or without usable coordinates. There is no background location tracking.
 - Optional post-discovery drafting queues a bounded number of new, eligible leads (default 10) for Scout → Critic → Communication and human review. This uses LLM credits; it never sends messages or makes calls.
-- Scout → Critic → Communication selects a service idea using the operator's actual offer. Drafts pause for approval, edits or rejection. No draft automatically sends.
+- A LangGraph Research → Scout → Critic → Communication graph stores source-attributed observations and proposed ideas, scores contact and source completeness, then interrupts at human review. PostgreSQL checkpoints preserve drafts through approval, edits or rejection. No draft automatically sends.
+- Campaign planning/discovery and inbound reply classification run as separate LangGraph workflows. SQL work items retain retries and polling between invocations.
+- Campaign timelines, idea sources, analytics and deployment settings are available in the operator dashboard.
 - Separate authenticated ElevenLabs WebRTC operator and client assistants. The operator can read real neighbourhood pipeline counts; the client collects service, location, time and contact, then saves a pending intake only after consent.
 - A communication hub handles email replies and client chat. Operators can draft/edit/approve replies, answer clients in their portal, and confirm/decline service requests.
 - Signed, durable Resend webhooks; retry-safe event processing; per-operator WebSocket channels with a ten-second polling fallback.
@@ -24,7 +26,28 @@ human-approved AI outreach.
 
 Keep the existing `.env`; do not overwrite your keys with the example.
 For a fresh checkout, copy `.env.example` to `.env`, generate a strong `JWT_SECRET`,
-set the database password and provide your provider keys.
+set the database password and provide one reasoning provider key. For example, set
+`LLM_PROVIDER=groq` and `GROQ_API_KEY`, or use `LLM_PROVIDER=compatible` with
+`LLM_MODEL` and `LLM_BASE_URL` for a local OpenAI-compatible server. The selected
+provider is never silently replaced when it fails. Optional voice, SMS, Telegram
+and Resend credentials can remain blank.
+
+For development without Compose, run PostgreSQL, MongoDB and Redis locally and
+point `DATABASE_URL`, `MONGO_URL` and `REDIS_URL` at those services. Install the
+backend dependencies from `backend/requirements.txt`, then start the API and
+worker in separate terminals from `backend`:
+
+```powershell
+python -m uvicorn app.main:app --reload --port 8000
+python -m app.worker
+```
+
+From `frontend`, run `npm install` and `npm run dev`. The API and worker apply
+Alembic migrations at startup. Live discovery additionally needs the inspected
+Google Maps scraper API at `SCRAPER_BASE_URL`; demo campaigns avoid it. Local
+email previews need MailHog when `EMAIL_PROVIDER=smtp`; set `SMTP_HOST=localhost`
+for a host-installed MailHog. These services are not
+bundled into the Python or Node processes.
 
 ```powershell
 docker compose up -d --build
@@ -40,6 +63,34 @@ existing services. Container-to-container connections use the standard internal 
 Database and scraper volumes are persistent; do not run `docker compose down -v`
 unless you explicitly intend to erase their data.
 
+The scraper container uses the same pinned `gosom/google-maps-scraper:v1.18.1`
+web API as the [Google Maps Scraper Kit](https://github.com/Mahanaicoach/google-maps-scraper-kit).
+The app submits a bounded job to `/api/v1/jobs`, polls its status, downloads its
+CSV, and normalizes records. The kit's Claude commands and standalone CLI are
+not required in the running stack. A city-only campaign resolves coordinates
+through OpenStreetMap Nominatim before submitting the job; browser-location
+searches use the coordinates supplied by the user. City lookup and live discovery
+therefore need internet access. The scraper is bound to localhost on the host and
+has no public authentication; do not expose its port publicly. Respect source
+terms and applicable contact-data rules.
+
+The campaign graph plans and dispatches durable SQL work items. Each selected lead then runs
+the LangGraph `research → scout → critic → draft → human_review` nodes. `human_review`
+interrupts and saves a PostgreSQL checkpoint; approval resumes that graph without
+regenerating the proposal. PostgreSQL lead records and the work queue remain the
+source of truth, and the email service rechecks suppression, approval and daily
+limits immediately before delivery. Incoming replies run later as separate
+durable webhook tasks through a separate conversation graph; they do not keep the lead graph open.
+
+Research uses public business websites and, when `TAVILY_API_KEY` is set, the
+[Tavily Search API](https://docs.tavily.com/documentation/api-reference/endpoint/search).
+Search hits must match the business name; all snippets retain a source URL and
+confidence label. The score is a transparent completeness measure, not a claim
+that a business has a problem or will convert. Its factors include a simple
+category-to-target match and can be adjusted with `LEAD_SCORE_*_WEIGHT` settings.
+Website requests reject private
+network addresses and redirects. Research failures leave listing evidence usable.
+
 `/health` is liveness only. `/ready` checks SQL and MongoDB; authenticated
 `/api/v1/system/status` also reports Redis, worker heartbeat and provider configuration.
 A configured provider is not a claim that a browser microphone or a phone number was tested.
@@ -54,6 +105,39 @@ A configured provider is not a claim that a browser microphone or a phone number
 6. Invited clients get a separate portal with their own chat, voice assistant and where/when request form.
 7. Use **Communication** for client questions, email replies and pending confirmations.
 8. Add style preferences or feedback at a checkpoint. Later drafts use those rules and decision examples.
+
+## Complete offline demo (no provider keys required)
+
+Copy `.env.example` to `.env` and set the following values. Demo mode deliberately
+requires separate SQL and MongoDB names and local MailHog delivery, so sample
+records cannot be mistaken for a live campaign:
+
+```dotenv
+APP_ENV=demo
+DEMO_MODE=true
+POSTGRES_DB=hydps2_demo
+DATABASE_URL=postgresql+asyncpg://hydps2:CHANGE_ME@localhost:5432/hydps2_demo
+MONGO_DB=hydps2_memory_demo
+EMAIL_PROVIDER=smtp
+EMAIL_ENABLED=false
+```
+
+Set `POSTGRES_PASSWORD` and the URL password to the same value and generate a
+strong `JWT_SECRET`. Leave LLM and scraper provider keys blank. Start in a
+separate Compose project (stop any stack already using the same host ports):
+
+```powershell
+docker compose -p hydps2-demo up -d --build
+```
+
+Create an operator, then submit the two campaign answers. Demo planning produces
+three `[Demo]` sample businesses, deterministic hypothetical ideas and drafts,
+and runs the same LangGraph interruption and approval path as live mode. The
+dashboard displays a persistent demo banner. Approved messages go only to local
+MailHog at [localhost:8025](http://localhost:8025). Use the authenticated reply
+simulator described below for interest and STOP examples. The demo campaign flow
+does not call live Maps, Nominatim, LLM or email providers. The demo data uses reserved
+example addresses and is stored in the separate demo databases.
 
 ## Local email demo (no domain required)
 
@@ -88,7 +172,7 @@ opt-out checks still apply. Do not interpret a dry-run delivery as a real conver
 ```
 
 Simulation requires operator authentication, ownership, a matching sender,
-`APP_ENV=development` and SMTP dry-run mode. It bypasses only the provider body
+`APP_ENV=development` or `APP_ENV=demo`, and SMTP dry-run mode. It bypasses only the provider body
 fetch, never ownership/suppression checks. Both live and simulated events use the
 same durable queue and reply handler. View drafts in **Communication**, actual
 interested replies at `/api/v1/communications/interested`, notifications at
@@ -215,14 +299,18 @@ For another deployment hostname set `NEXT_PUBLIC_WS_URL` at frontend build time 
 the externally reachable API origin (`wss://...`). The frontend HTTP proxy targets the
 Docker gateway in the production image; local development targets 127.0.0.1:8000.
 
-Startup uses an additive compatibility migration and a PostgreSQL advisory lock,
-preserving existing data. Take backups before upgrading an existing deployment.
+Startup applies Alembic revisions under a PostgreSQL advisory lock, preserving
+existing data. The baseline adopts older databases and creates missing research
+tables/columns. Take backups before upgrading an existing deployment. Startup
+fails if a migration fails, so an unknown schema is never served.
+To apply migrations manually with the same `DATABASE_URL`, run
+`cd backend; alembic upgrade head`.
 
 ## Verify
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install -r backend/requirements.txt -r backend/requirements-dev.txt
-.\.venv\Scripts\python.exe -m pytest backend/tests -q
+python -m pip install -r backend/requirements-dev.txt
+python -m pytest backend/tests -q
 cd frontend
 npm ci
 npm run typecheck
@@ -236,8 +324,18 @@ voice agents and Resend domain status without sending an email or contacting a l
 Tests cover authentication, tenant isolation, import deduplication, background tasks,
 human approval/memory, signed webhooks, refusal suppression after reimport, provider
 timeout reservations, client portal replies, appointment intake and WebSocket authorization.
+The focused graph tests also verify node order, interruption, review resumption and
+the city-to-scraper request contract without using paid APIs.
 Browser call/audio QA and real email delivery need a browser/microphone and a verified
 sending domain respectively; API checks are not substitutes for those tests.
+
+## Current boundaries
+
+Demo mode provides deterministic planning, sample discovery, synthetic evidence,
+ideas, drafts, MailHog delivery and simulated replies without paid services.
+Website and search snippets are source-attributed observations; proposed business
+problems remain hypotheses for operator review. Live provider and browser behavior
+requires configured services and credentials to verify end to end.
 
 ## Secret handling
 

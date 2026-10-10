@@ -4,10 +4,11 @@ import { ArrowRight, Pause, Play, Sparkle } from "@phosphor-icons/react";
 import { api, User } from "./api";
 
 export type Campaign = { id: string; service_description: string; target_clients: string; plan: { keywords?: string[]; city?: string; rationale?: string }; status: string; paused: boolean; counts: Record<string, number>; total: number };
+export type CampaignDetail = { id: string; status: string; paused: boolean; service_description: string; target_clients: string; leads_discovered: number; research_completed: number; ideas_generated: number; awaiting_approval: number; timeline: { id: string; kind: string; status: string; at: string; completed_at?: string; error_message?: string }[]; jobs: { id: string; status: string; lead_count: number; error_message?: string }[] };
 export type RunAction = (name: string, run: () => Promise<string | void>) => Promise<void>;
 
-export function CampaignDesk({ user, campaigns, busy, action, onStarted, onResults }: {
-  user: User; campaigns: Campaign[]; busy: boolean; action: RunAction; onStarted: (user: User) => void; onResults: (id: string) => void;
+export function CampaignDesk({ user, campaigns, detail, busy, action, onStarted, onResults, onTimeline }: {
+  user: User; campaigns: Campaign[]; detail: CampaignDetail | null; busy: boolean; action: RunAction; onStarted: (user: User) => void; onResults: (id: string) => void; onTimeline: (id: string) => void;
 }) {
   const request = useRef("");
   const lastInputs = useRef("");
@@ -39,10 +40,13 @@ export function CampaignDesk({ user, campaigns, busy, action, onStarted, onResul
         <p>{campaign.service_description}</p>
         {campaign.plan.keywords && <div className="search-chips">{campaign.plan.keywords.map(word => <span key={word}>{word}</span>)}</div>}
         <p className="muted">{campaign.plan.rationale || "Your orchestrator is selecting relevant business categories."}</p>
+        {campaign.status === "insufficient_leads" && <p className="inline-error">This search found no importable businesses. Refine the target clients or location above and start a new campaign.</p>}
         <div className="campaign-progress"><span><strong>{campaign.total}</strong> businesses</span><span><strong>{(campaign.counts.drafted || 0) + (campaign.counts.approved || 0)}</strong> for review</span><span><strong>{campaign.counts.replied || 0}</strong> replied</span></div>
         <div className="form-actions"><button className="primary" disabled={busy} onClick={() => onResults(campaign.id)}>View this search <ArrowRight /></button>
+          <button className="compact" disabled={busy} onClick={() => onTimeline(campaign.id)}>Timeline</button>
           <button className="compact" disabled={busy} onClick={() => void action(`campaign-${campaign.id}`, async () => { await api(`/campaigns/${campaign.id}/${campaign.paused ? "resume" : "pause"}`, { method: "POST" }); return campaign.paused ? "Campaign resumed." : "Campaign paused. The current step will finish; new steps and sends will wait."; })}>{campaign.paused ? <Play /> : <Pause />}{campaign.paused ? "Resume" : "Pause"}</button></div>
       </article>)}</div> : <div className="empty"><Sparkle /><h3>Your agent is ready.</h3><p>Two answers above start your first search. Add an area in the second answer, or we&apos;ll start in Hyderabad.</p></div>}
     </section>
+    {detail && <section className="panel"><div className="panel-head"><h2>Campaign timeline</h2><span className="count">{detail.timeline.length} steps</span></div><div className="panel-body"><p><strong>Service:</strong> {detail.service_description}</p><p><strong>Target clients:</strong> {detail.target_clients}</p><div className="campaign-progress"><span><strong>{detail.leads_discovered}</strong> discovered</span><span><strong>{detail.research_completed}</strong> researched</span><span><strong>{detail.ideas_generated}</strong> ideas</span><span><strong>{detail.awaiting_approval}</strong> awaiting review</span></div></div><div className="task-list">{detail.timeline.map(item => <article key={item.id}><span><strong>{item.kind.replaceAll("_", " ")}</strong><small>{new Date(item.at).toLocaleString()}</small></span><span className="status">{item.status}</span>{item.error_message && <p className="inline-error">{item.error_message}</p>}</article>)}{detail.jobs.map(job => <article key={job.id}><span><strong>Discovery job</strong><small>{job.lead_count} businesses</small></span><span className="status">{job.status}</span>{job.error_message && <p className="inline-error">{job.error_message}</p>}</article>)}</div></section>}
   </>;
 }

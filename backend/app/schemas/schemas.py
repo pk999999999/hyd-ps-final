@@ -156,6 +156,10 @@ class LeadResponse(BaseModel):
     pitch_hook: str = ""
     draft_subject: str = ""
     draft_body: str = ""
+    lead_score: int = 0
+    research_status: str = "pending"
+    updated_at: datetime
+    last_contacted_at: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
 
@@ -167,6 +171,7 @@ class DecisionRequest(BaseModel):
     feedback_tag: Optional[str] = None
     notes: Optional[str] = None
     send_email: bool = False
+    permission_basis: str = Field(default="", max_length=1000)
 
 
 class DecisionResponse(BaseModel):

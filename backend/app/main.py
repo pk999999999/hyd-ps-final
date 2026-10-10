@@ -23,6 +23,7 @@ from app.api.client import router as client_router
 from app.api.communications import router as communications_router
 from app.api.campaigns import router as campaigns_router
 from app.api.scheduling import router as scheduling_router
+from app.api.insights import router as insights_router
 
 settings = get_settings()
 
@@ -63,6 +64,7 @@ app.include_router(client_router, prefix="/api/v1")
 app.include_router(communications_router, prefix="/api/v1")
 app.include_router(campaigns_router, prefix="/api/v1")
 app.include_router(scheduling_router, prefix="/api/v1")
+app.include_router(insights_router, prefix="/api/v1")
 
 
 @app.exception_handler(ProviderError)
@@ -115,6 +117,7 @@ async def readiness():
 
 @app.get("/api/v1/system/status")
 async def system_status(user=Depends(get_operator_user)):
+    from app.services.model_provider import ProviderError, validate_provider_configuration
     dependencies = await dependency_status()
     cache = await get_redis()
     worker = False
@@ -123,8 +126,14 @@ async def system_status(user=Depends(get_operator_user)):
             worker = bool(await cache.get("hydps2:worker:heartbeat"))
         except Exception:
             pass
+    try:
+        validate_provider_configuration(settings)
+        llm_configured = True
+    except ProviderError:
+        llm_configured = False
     return {"dependencies": dependencies, "worker": "online" if worker else "offline",
-            "llm_configured": bool(settings.openrouter_api_key or settings.groq_api_key or settings.gemini_api_key),
+            "llm_configured": llm_configured,
+            "demo_mode": settings.demo_mode,
             "voice_configured": bool(settings.elevenlabs_api_key and settings.elevenlabs_agent_id and settings.elevenlabs_operator_agent_id),
             "email_enabled": settings.email_enabled, "sender": settings.email_from,
             "email_provider": settings.email_provider, "dry_run": settings.email_provider == "smtp",

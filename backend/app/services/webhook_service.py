@@ -68,7 +68,7 @@ async def process_resend_event(db, mongo, event):
         if message.status == "received":
             await classify_reply(db, memory, message)
         if message.status != "suppressed" and not await is_suppressed(db, lead):
-            if message.classification in ("interested", "callback"):
+            if message.classification in ("interested", "callback", "schedule_inquiry"):
                 await notify(db, lead.user_id, f"interest:{message.id}", "Interested lead needs your attention", lead.title, lead.id)
             await propose_meeting(db, message, lead)
             if not message.draft_response and message.status != "sent":

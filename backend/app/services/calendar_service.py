@@ -137,8 +137,13 @@ async def analyze_reply_and_scheduling(
 
     # Normalize fields
     intent = data.get("intent", "other")
-    if intent not in ["meeting_agreed", "schedule_inquiry", "question", "interested", "not_interested", "opted_out", "other"]:
-        intent = "interested" if "interested" in reply_text.lower() else "other"
+    if intent not in ["meeting_agreed", "schedule_inquiry", "question", "interested", "not_interested", "opted_out", "complaint", "other"]:
+        intent = "other"
+    explicit_time = bool(re.search(r"\b(?:tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b[^\n]{0,50}\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b", reply_text.lower()))
+    if intent == "meeting_agreed" and not explicit_time:
+        intent = "schedule_inquiry"
+        data["has_proposed_slot"] = False
+        data["suggested_reply"] = "Happy to discuss a meeting. Which date and time would work for you?"
     data["intent"] = intent
 
     # Validate and parse proposed_start_iso if present
@@ -152,7 +157,16 @@ async def analyze_reply_and_scheduling(
             start_dt = None
             data["has_proposed_slot"] = False
 
-    duration = int(data.get("duration_minutes") or 30)
+    try:
+        duration = int(data.get("duration_minutes") or 30)
+    except (TypeError, ValueError):
+        duration = 30
+    duration = min(120, max(15, duration))
+    if start_dt and (start_dt <= ref or start_dt > ref + timedelta(days=90)):
+        start_dt = None
+    if intent == "meeting_agreed" and not start_dt:
+        data["intent"] = "schedule_inquiry"
+        data["suggested_reply"] = "Happy to connect. Could you confirm a date, time and timezone?"
     end_dt = (start_dt + timedelta(minutes=duration)) if start_dt else None
 
     data["start_datetime"] = start_dt
@@ -169,21 +183,25 @@ def fallback_scheduling_heuristic(reply_text: str, business_title: str, now: dat
     
     # Meeting agreement patterns: e.g. "tomorrow at 3pm", "monday at 11am"
     time_match = re.search(r"\b(tomorrow|monday|tuesday|wednesday|thursday|friday|saturday)\b.*?\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b", lower)
-    if time_match or ("let's meet" in lower or "schedule a call" in lower or "call me tomorrow" in lower or "works for me" in lower):
-        # Default to tomorrow at 15:00 IST
-        tomorrow_slot = (now + timedelta(days=1)).replace(hour=15, minute=0, second=0, microsecond=0)
-        formatted = format_slot_ist(tomorrow_slot)
+    if time_match:
+        day = time_match.group(1)
+        weekdays = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+        days_ahead = 1 if day == "tomorrow" else (weekdays.index(day) - now.weekday()) % 7 or 7
+        hour = int(time_match.group(2)) % 12 + (12 if time_match.group(4) == "pm" else 0)
+        minute = int(time_match.group(3) or 0)
+        slot = (now + timedelta(days=days_ahead)).replace(hour=hour, minute=minute, second=0, microsecond=0)
+        formatted = format_slot_ist(slot)
         return {
             "intent": "meeting_agreed",
             "has_proposed_slot": True,
-            "proposed_start_iso": tomorrow_slot.isoformat(),
+            "proposed_start_iso": slot.isoformat(),
             "duration_minutes": 30,
             "meeting_title": f"Intro Call with {business_title}",
             "notes": "Extracted via scheduling heuristic",
             "suggested_reply": f"Thank you! I have scheduled our call for {formatted} and sent over a calendar invite.",
         }
     
-    if any(q in lower for q in ["when are you free", "what time", "available", "schedule", "call", "meet"]):
+    if any(q in lower for q in ["when are you free", "what time", "available", "schedule", "call", "meet", "works for me"]):
         slots = suggest_upcoming_slots(now, 2)
         slot_texts = " or ".join(format_slot_ist(s) for s in slots)
         return {
@@ -197,11 +215,11 @@ def fallback_scheduling_heuristic(reply_text: str, business_title: str, now: dat
         }
 
     return {
-        "intent": "interested",
+        "intent": "interested" if re.search(r"\b(?:interested|tell me more|sounds good)\b", lower) else "question" if "?" in lower else "other",
         "has_proposed_slot": False,
         "proposed_start_iso": None,
         "duration_minutes": 30,
         "meeting_title": f"Discussion with {business_title}",
         "notes": "General interest response",
-        "suggested_reply": "Thank you for getting back to us. I'd love to share more details about how we can help your business.",
+        "suggested_reply": "",
     }

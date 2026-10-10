@@ -6,10 +6,10 @@ import asyncio
 from html import escape
 from typing import Dict, Any, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.models.models import Lead, User, Job, Campaign
+from app.models.models import Lead, User, Job, Campaign, LeadIdea, LeadEvidence
 from app.agents.state import LeadWorkflowState
-from app.agents.scout_agent import scout_propose_ideas, critic_filter_ideas
-from app.agents.comms_agent import draft_outreach_email
+from app.agents.lead_graph import build_lead_graph, lead_checkpointer, lead_graph_config
+from langgraph.types import Command
 from app.services.memory_service import MemoryService
 from app.services.email_service import EmailService
 
@@ -53,6 +53,8 @@ class Orchestrator:
             "review_count": lead.review_count,
             "address": lead.address,
             "raw_data": lead.raw_data,
+            "evidence": [],
+            "lead_score": lead.lead_score or 0,
             "style_rules": style_rules,
             "few_shot_examples": past_decisions + outcomes,
             "proposed_ideas": [],
@@ -70,17 +72,17 @@ class Orchestrator:
             "status_message": "Pipeline initiated",
         }
 
-        # Step 1: Scout
-        scout_res = await scout_propose_ideas(state)
-        state.update(scout_res)
+        async def research_node(_state):
+            from app.services.research_service import research_lead
+            evidence = await research_lead(self.session, lead)
+            return {"evidence": evidence, "lead_score": lead.lead_score,
+                    "current_step": "researched"}
 
-        # Step 2: Critic
-        critic_res = await critic_filter_ideas(state)
-        state.update(critic_res)
-
-        # Step 3: Comms Draft
-        draft_res = await draft_outreach_email(state)
-        state.update(draft_res)
+        async with lead_checkpointer(self.session) as checkpointer:
+            graph = build_lead_graph(checkpointer, research_node)
+            state = await graph.ainvoke(state, lead_graph_config(str(operator.id), str(lead.id)))
+        if not state.get("__interrupt__") or not state.get("draft_body"):
+            raise RuntimeError("The lead graph did not reach its human review checkpoint.")
 
         # 3. Persist drafted state to PostgreSQL lead
         from app.services.communication_service import is_suppressed
@@ -93,6 +95,23 @@ class Orchestrator:
         lead.draft_subject = state.get("draft_subject")
         lead.draft_body = state.get("draft_body")
         lead.status = "drafted"
+        from sqlalchemy import delete
+        await self.session.execute(delete(LeadIdea).where(LeadIdea.lead_id == lead.id))
+        evidence_ids = {item["id"] for item in state.get("evidence") or []}
+        selected = state.get("selected_idea") or {}
+        for idea in state.get("proposed_ideas") or []:
+            evidence_id = idea.get("evidence_id")
+            if evidence_id not in evidence_ids:
+                evidence_id = None
+            self.session.add(LeadIdea(lead_id=lead.id, evidence_id=uuid.UUID(evidence_id) if evidence_id else None,
+                hook_name=str(idea.get("hook_name") or "Idea")[:500], problem=str(idea.get("problem") or ""),
+                pitch=str(idea.get("pitch") or ""),
+                potential_benefit=str(idea.get("potential_benefit") or ""),
+                uncertainty=str(idea.get("uncertainty") or "Unverified business need; discuss with the operator."),
+                implementation=str(idea.get("implementation") or ""),
+                suggested_cta=str(idea.get("suggested_cta") or ""),
+                confidence="source_supported" if evidence_id else "hypothesis",
+                status="selected" if idea == selected else "proposed"))
         await self.session.commit()
 
         return state
@@ -111,6 +130,18 @@ class Orchestrator:
         """Resumes pipeline from human checkpoint, records learning in Mongo, and dispatches if approved."""
         subject = final_subject or lead.draft_subject or f"Quick question regarding {lead.title}"
         body = final_body or lead.draft_body or ""
+
+        # Resume the saved review node. Legacy drafts without a graph checkpoint
+        # remain reviewable, since their SQL record is still authoritative.
+        async with lead_checkpointer(self.session) as checkpointer:
+            graph = build_lead_graph(checkpointer)
+            config = lead_graph_config(str(operator.id), str(lead.id))
+            snapshot = await graph.aget_state(config)
+            if snapshot.next:
+                resumed = await graph.ainvoke(Command(resume={"action": action,
+                    "subject": subject, "body": body}), config)
+                if resumed.get("human_action") != action:
+                    raise RuntimeError("The lead graph did not accept the review decision.")
 
         # 1. Record decision in MongoDB for in-context learning
         proposal = {

@@ -1,104 +1,510 @@
 "use client";
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { Check, Crosshair, MagnifyingGlass, MapPin, SpinnerGap } from "@phosphor-icons/react";
+import {
+  ArrowSquareOut,
+  ArrowUpRight,
+  Check,
+  Crosshair,
+  Globe,
+  MagnifyingGlass,
+  MapPin,
+  Phone,
+  Sparkle,
+  SpinnerGap,
+  Star,
+  WarningCircle,
+} from "@phosphor-icons/react";
+import { api, User } from "./api";
+import { TavilyDiscoveredLead } from "./api/discover-tavily/route";
 
 export type DiscoveryRequest = {
-  keywords: string[]; city: string; depth: number; scheduled_at?: string;
-  latitude?: string; longitude?: string; location_source: "manual" | "browser";
-  location_captured_at?: string; radius_m: number; prepare_drafts: boolean; draft_limit: number;
+  keywords: string[];
+  city: string;
+  depth: number;
+  scheduled_at?: string;
+  latitude?: string;
+  longitude?: string;
+  location_source: "manual" | "browser";
+  location_captured_at?: string;
+  radius_m: number;
+  prepare_drafts: boolean;
+  draft_limit: number;
 };
-type Position = { latitude: number; longitude: number; accuracy: number; capturedAt: number };
 
-export function DiscoveryForm({ busy, hasStrategy, demoMode, onDiscover }: {
-  busy: boolean; hasStrategy: boolean; demoMode: boolean; onDiscover: (request: DiscoveryRequest) => Promise<void>;
+type Position = {
+  latitude: number;
+  longitude: number;
+  accuracy: number;
+  capturedAt: number;
+  resolvedArea?: string;
+};
+
+export function DiscoveryForm({
+  busy,
+  user,
+  onLeadsImported,
+  onNavigateToLeads,
+}: {
+  busy?: boolean;
+  hasStrategy?: boolean;
+  demoMode?: boolean;
+  onDiscover?: (request: DiscoveryRequest) => Promise<void>;
+  user?: User;
+  onLeadsImported?: () => void;
+  onNavigateToLeads?: (leadId?: string) => void;
 }) {
-  const [source, setSource] = useState<"manual" | "browser">("manual");
+  const [source, setSource] = useState<"manual" | "browser">("browser");
   const [position, setPosition] = useState<Position | null>(null);
   const [locating, setLocating] = useState(false);
   const [locationError, setLocationError] = useState("");
-  const [prepare, setPrepare] = useState(false);
-  const [radius, setRadius] = useState(5000);
+  const [manualArea, setManualArea] = useState("Hyderabad, Telangana");
+
+  // User questions requested
+  const [service, setService] = useState(
+    user?.service_description || "AI receptionist and 24/7 automated appointment booking"
+  );
+  const [clients, setClients] = useState(
+    user?.target_clients || "Hair salons, unisex parlours, dental clinics"
+  );
+  const [resultLimit, setResultLimit] = useState(20);
+
+  // Discovery execution state
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState("");
+  const [discoveredLeads, setDiscoveredLeads] = useState<TavilyDiscoveredLead[]>([]);
+  const [discoveredLocation, setDiscoveredLocation] = useState("");
+  const [importStatus, setImportStatus] = useState("");
+
   const requestId = useRef(0);
   useEffect(() => () => { requestId.current += 1; }, []);
 
+  // Sync user defaults when user prop loads
+  useEffect(() => {
+    if (user?.service_description) setService(user.service_description);
+    if (user?.target_clients) setClients(user.target_clients);
+  }, [user]);
+
   function manualLocation() {
     requestId.current += 1;
-    setSource("manual"); setPosition(null); setLocationError(""); setLocating(false);
+    setSource("manual");
+    setPosition(null);
+    setLocationError("");
+    setLocating(false);
   }
+
   function locate() {
     const id = ++requestId.current;
-    setLocationError(""); setPosition(null); setSource("browser");
-    if (!window.isSecureContext) {
-      setLocationError("Location requires HTTPS or localhost. You can still enter an area manually."); return;
+    setLocationError("");
+    setSource("browser");
+
+    if (typeof window === "undefined" || !navigator.geolocation) {
+      setLocationError("This browser cannot share location. Enter an area manually instead.");
+      return;
     }
-    if (!navigator.geolocation) {
-      setLocationError("This browser cannot share location. Enter an area manually instead."); return;
-    }
+
     setLocating(true);
-    navigator.geolocation.getCurrentPosition(result => {
-      if (id !== requestId.current) return;
-      setLocating(false);
-      setPosition({ latitude: result.coords.latitude, longitude: result.coords.longitude,
-        accuracy: result.coords.accuracy, capturedAt: result.timestamp });
-    }, error => {
-      if (id !== requestId.current) return;
-      setLocating(false);
-      setLocationError(error.code === 1
-        ? "Location permission was denied. Allow location in your browser settings, or enter an area manually."
-        : error.code === 3 ? "Location timed out. Try again outdoors or enter an area manually."
-        : "Your device could not determine its location. Try again or enter an area manually.");
-    }, { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 });
+    navigator.geolocation.getCurrentPosition(
+      async result => {
+        if (id !== requestId.current) return;
+        setLocating(false);
+        const lat = result.coords.latitude;
+        const lon = result.coords.longitude;
+        let area = "Hyderabad, Telangana";
+
+        try {
+          const res = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=14`,
+            { signal: AbortSignal.timeout(5000) }
+          );
+          if (res.ok) {
+            const data = await res.json();
+            const a = data.address || {};
+            const parts = [
+              a.suburb || a.neighbourhood || a.residential || a.road,
+              a.city || a.town || "Hyderabad",
+            ].filter(Boolean);
+            if (parts.length) area = parts.join(", ");
+          }
+        } catch {
+          // fallback to coordinates
+          area = `${lat.toFixed(4)}° N, ${lon.toFixed(4)}° E`;
+        }
+
+        setPosition({
+          latitude: lat,
+          longitude: lon,
+          accuracy: result.coords.accuracy,
+          capturedAt: result.timestamp,
+          resolvedArea: area,
+        });
+      },
+      error => {
+        if (id !== requestId.current) return;
+        setLocating(false);
+        setLocationError(
+          error.code === 1
+            ? "Location permission was denied. Please allow location in your browser settings or enter your area manually."
+            : error.code === 3
+            ? "Location timed out. Please try again or enter your area manually."
+            : "Your device could not determine its location. Please enter your area manually."
+        );
+      },
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
+    );
   }
-  async function submit(event: FormEvent<HTMLFormElement>) {
+
+  // Run discovery via Tavily API
+  async function runTavilyDiscovery(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    if (source === "browser" && (!position || Date.now() - position.capturedAt > 300000)) {
-      setLocationError("Please use my location again to get a fresh position before searching."); return;
+    setSearching(true);
+    setSearchError("");
+    setImportStatus("");
+
+    try {
+      const activeLocation =
+        source === "browser" && position
+          ? position.resolvedArea || `${position.latitude.toFixed(4)}, ${position.longitude.toFixed(4)}`
+          : manualArea || "Hyderabad, Telangana";
+
+      const res = await fetch("/api/discover-tavily", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          service: service.trim(),
+          clients: clients.trim(),
+          latitude: position?.latitude,
+          longitude: position?.longitude,
+          location_name: activeLocation,
+          limit: resultLimit,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Failed to find businesses from Tavily");
+      }
+
+      const leads: TavilyDiscoveredLead[] = data.leads || [];
+      setDiscoveredLeads(leads);
+      setDiscoveredLocation(data.location || activeLocation);
+
+      // Save user strategy to backend if logged in
+      if (user) {
+        api("/onboarding/strategy", {
+          method: "POST",
+          body: JSON.stringify({
+            service_description: service.trim(),
+            target_clients: clients.trim(),
+          }),
+        }).catch(() => {});
+      }
+
+      // Sync discovered leads into PostgreSQL leads table via /leads/import
+      if (data.csv_text && typeof window !== "undefined" && localStorage.getItem("hydps2_token")) {
+        try {
+          const importResult = await api<{ imported: number }>("/leads/import", {
+            method: "POST",
+            body: JSON.stringify({ csv_text: data.csv_text }),
+          });
+          setImportStatus(`Synced ${importResult.imported} new businesses to your Leads pipeline.`);
+          if (onLeadsImported) onLeadsImported();
+        } catch {
+          setImportStatus("Leads ready for review.");
+        }
+      }
+    } catch (err: unknown) {
+      setSearchError(err instanceof Error ? err.message : "Error discovering businesses via Tavily.");
+    } finally {
+      setSearching(false);
     }
-    await onDiscover({ keywords: String(form.get("keywords")).split(","),
-      city: source === "browser" ? "Shared device location" : String(form.get("city")),
-      depth: Number(form.get("depth")), radius_m: radius, location_source: source,
-      ...(source === "browser" && position ? { latitude: String(position.latitude), longitude: String(position.longitude),
-        location_captured_at: new Date(position.capturedAt).toISOString() } : {}),
-      scheduled_at: form.get("schedule") ? new Date(String(form.get("schedule"))).toISOString() : undefined,
-      prepare_drafts: prepare && hasStrategy, draft_limit: Number(form.get("draft_limit") || 10),
-    });
   }
-  return <section className="panel">
-    <div className="panel-head"><div><p className="eyebrow">START WITH YOUR NEIGHBOURHOOD</p><h2>Who would you like to meet?</h2></div><MapPin size={26} aria-hidden="true" /></div>
-    <form className="panel-body discovery-form" onSubmit={submit}>
-      <label>Business categories<input name="keywords" required maxLength={2000} defaultValue="hair salon, dental clinic" placeholder="Comma-separated categories" /><small>{demoMode ? "Demo mode creates three synthetic businesses for the first category. No live Maps search runs." : "Search Google Maps live, with up to 20 categories in one job."}</small></label>
-      <div className="location-picker">
-        <div className="location-heading"><div><strong>Start close to home.</strong><p>Share your device location to find businesses nearby.</p></div>
-          <button type="button" className="compact" disabled={busy || locating} onClick={locate} aria-describedby="location-privacy">
-            {locating ? <SpinnerGap className="spin" aria-hidden="true" /> : <Crosshair aria-hidden="true" />}
-            {locating ? "Finding you…" : position ? "Refresh my location" : "Use my location"}
-          </button>
+
+  return (
+    <>
+      <section className="panel tavily-search-panel">
+        <div className="panel-head">
+          <div>
+            <p className="eyebrow">LIVE LOCATION & TAVILY GOOGLE MAPS DISCOVERY</p>
+            <h2>Find your next clients near you</h2>
+          </div>
+          <MapPin size={28} aria-hidden="true" />
         </div>
-        <p id="location-privacy" className="muted">Only when you choose. No background tracking. On submission, this search point is saved with your job and sent to the Maps scraper.</p>
-        <div role="status" aria-live="polite">
-          {locating && <p className="muted">Waiting for your device. Please allow location if your browser asks.</p>}
-          {position && <div className="location-result"><Check aria-hidden="true" /><div><strong>Location captured · within about {Math.round(position.accuracy)} m</strong>
-            <small>{position.latitude.toFixed(5)}, {position.longitude.toFixed(5)} · {new Date(position.capturedAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</small>
-            {position.accuracy > radius && <p className="inline-error">Device accuracy is wider than your search radius. Increase the radius or choose an area manually.</p>}
-            <small>Scheduled searches use this saved point, not your location at the future start time.</small>
-          </div></div>}
-        </div>
-        {locationError && <p className="inline-error" role="alert">{locationError}</p>}
-        {source === "browser" && <button type="button" className="compact" onClick={manualLocation}>Use an area instead</button>}
-      </div>
-      {source === "manual" ? <label>Area / city<input name="city" list="hyderabad-areas" required maxLength={255} defaultValue="Banjara Hills, Hyderabad" />
-        <datalist id="hyderabad-areas">{["Banjara Hills, Hyderabad", "Jubilee Hills, Hyderabad", "Gachibowli, Hyderabad", "Madhapur, Hyderabad", "Secunderabad, Hyderabad", "Hyderabad"].map(area => <option key={area} value={area} />)}</datalist>
-        <small>Manual searches match your area text. Use device location for a strict radius.</small></label>
-        : <label>Search within<select value={radius} onChange={event => setRadius(Number(event.target.value))}>
-          {[500, 1000, 2000, 5000, 10000, 25000, 50000].map(value => <option key={value} value={value}>{value < 1000 ? `${value} m` : `${value / 1000} km`}</option>)}
-        </select><small>Businesses outside this radius, or without usable coordinates, are excluded.</small></label>}
-      <div className="form-row"><label>Search depth<input name="depth" type="number" min={1} max={10} defaultValue={5} required /></label><label>Start time (optional, your local time)<input name="schedule" type="datetime-local" /></label></div>
-      <div className="discovery-next-step"><label className="checkbox-label"><input type="checkbox" checked={prepare && hasStrategy} disabled={!hasStrategy || busy} onChange={event => setPrepare(event.target.checked)} /><span>Prepare service ideas and outreach after discovery</span></label>
-        <p className="muted">{hasStrategy ? "Uses your AI provider credits. New eligible leads go through Scout → Critic → draft. Nothing is sent or called automatically." : "Save your offer in Memory & strategy to enable automatic draft preparation."}</p>
-        {prepare && hasStrategy && <label>Maximum drafts for this job<input name="draft_limit" type="number" min={1} max={100} defaultValue={10} required /></label>}
-      </div>
-      <div className="form-footer"><p className="muted">{demoMode ? "Synthetic examples only. Switch to a configured live deployment for real business results." : "Live Maps data + available emails. You approve each outreach."}</p><button className="primary" disabled={busy || locating || (source === "browser" && !position)}><MagnifyingGlass aria-hidden="true" />{busy ? "Queuing…" : demoMode ? "Create demo businesses" : "Discover businesses"}</button></div>
-    </form>
-  </section>;
+
+        <form className="panel-body tavily-form" onSubmit={runTavilyDiscovery}>
+          {/* Location Detection Box */}
+          <div className="tavily-location-card">
+            <div className="tavily-location-header">
+              <div>
+                <strong>Device Location Settings</strong>
+                <p>Fetch your exact live location to discover businesses right in your neighbourhood.</p>
+              </div>
+              <button
+                type="button"
+                className="compact"
+                disabled={locating || searching || busy}
+                onClick={locate}
+              >
+                {locating ? <SpinnerGap className="spin" /> : <Crosshair />}
+                {locating ? "Detecting location…" : position ? "Refresh live location" : "Use my live location"}
+              </button>
+            </div>
+
+            {position && (
+              <div className="location-result">
+                <Check size={20} color="var(--green)" />
+                <div>
+                  <span className="tavily-badge">
+                    Live location captured (accuracy ±{Math.round(position.accuracy)}m)
+                  </span>
+                  <p style={{ margin: "4px 0", fontWeight: 600, fontSize: "13px" }}>
+                    {position.resolvedArea}
+                  </p>
+                  <small className="muted">
+                    Coordinates: {position.latitude.toFixed(5)}° N, {position.longitude.toFixed(5)}° E
+                  </small>
+                </div>
+              </div>
+            )}
+
+            {locationError && (
+              <div className="inline-error" role="alert">
+                <WarningCircle /> {locationError}
+              </div>
+            )}
+
+            {source === "browser" && !position && !locating && (
+              <p className="muted" style={{ margin: 0, fontSize: "11px" }}>
+                Click <strong>&quot;Use my live location&quot;</strong> to auto-detect your location via browser settings, or switch to manual area.
+              </p>
+            )}
+
+            <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+              {source === "browser" ? (
+                <button
+                  type="button"
+                  className="compact"
+                  style={{ fontSize: "11px" }}
+                  onClick={manualLocation}
+                >
+                  Enter area manually instead
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="compact"
+                  style={{ fontSize: "11px" }}
+                  onClick={() => {
+                    setSource("browser");
+                    locate();
+                  }}
+                >
+                  <Crosshair /> Use GPS location
+                </button>
+              )}
+            </div>
+
+            {source === "manual" && (
+              <label style={{ marginTop: "10px" }}>
+                Area / City
+                <input
+                  value={manualArea}
+                  onChange={e => setManualArea(e.target.value)}
+                  placeholder="e.g. Ameerpet, Hyderabad or Banjara Hills, Hyderabad"
+                  required
+                />
+              </label>
+            )}
+          </div>
+
+          {/* User Details Required: Questions 1 & 2 */}
+          <div className="tavily-inputs-grid">
+            <label>
+              <span className="form-section-title">1. What&apos;s your service?</span>
+              <textarea
+                value={service}
+                onChange={e => setService(e.target.value)}
+                required
+                rows={2}
+                maxLength={1000}
+                placeholder="e.g. AI voice receptionist and automated appointment scheduling"
+              />
+              <small>Your service shapes every customized pitch and hook generated for these businesses.</small>
+            </label>
+
+            <label>
+              <span className="form-section-title">2. Who are your clients?</span>
+              <textarea
+                value={clients}
+                onChange={e => setClients(e.target.value)}
+                required
+                rows={2}
+                maxLength={1000}
+                placeholder="e.g. Hair salons, unisex parlours, dental clinics"
+              />
+              <small>Target business categories searched live on Google Maps and Tavily.</small>
+            </label>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: "16px", flexWrap: "wrap" }}>
+            <label style={{ display: "inline-flex", flexDirection: "row", alignItems: "center", gap: "8px" }}>
+              <span style={{ fontSize: "12px", color: "var(--muted)" }}>Number of results:</span>
+              <select
+                value={resultLimit}
+                onChange={e => setResultLimit(Number(e.target.value))}
+                style={{ width: "auto", minHeight: "36px", padding: "6px 12px" }}
+              >
+                <option value={15}>Top 15 businesses</option>
+                <option value={20}>Top 20 businesses</option>
+                <option value={25}>Top 25 businesses</option>
+              </select>
+            </label>
+          </div>
+
+          {searchError && (
+            <div className="alert error">
+              <WarningCircle /> {searchError}
+            </div>
+          )}
+
+          {importStatus && (
+            <div className="alert success">
+              <Check /> {importStatus}
+              {onNavigateToLeads && (
+                <button
+                  type="button"
+                  className="compact"
+                  style={{ marginLeft: "auto" }}
+                  onClick={() => onNavigateToLeads()}
+                >
+                  View in Leads Pipeline <ArrowUpRight />
+                </button>
+              )}
+            </div>
+          )}
+
+          <div className="form-footer">
+            <p className="muted" style={{ margin: 0 }}>
+              Live Tavily Search + Google Maps intelligence. Finds real businesses with phone, address, and ratings.
+            </p>
+            <button
+              type="submit"
+              className="primary"
+              disabled={searching || locating || busy || !service.trim() || !clients.trim()}
+              style={{ minHeight: "46px", padding: "0 22px", fontSize: "13px" }}
+            >
+              {searching ? (
+                <>
+                  <SpinnerGap className="spin" size={18} /> Finding top {resultLimit} businesses…
+                </>
+              ) : (
+                <>
+                  <MagnifyingGlass size={18} /> Find top {resultLimit} businesses now
+                </>
+              )}
+            </button>
+          </div>
+        </form>
+      </section>
+
+      {/* Discovered Results: 15–20 Cards Grid */}
+      {discoveredLeads.length > 0 && (
+        <section className="panel">
+          <div className="tavily-results-header">
+            <div>
+              <span className="eyebrow">TAVILY & GOOGLE MAPS RESULTS</span>
+              <h2>Top {discoveredLeads.length} Businesses Found near {discoveredLocation}</h2>
+              <p className="tavily-results-summary">
+                Targeting &quot;{clients}&quot; · Offering: &quot;{service}&quot;
+              </p>
+            </div>
+            {onNavigateToLeads && (
+              <button
+                type="button"
+                className="primary compact"
+                onClick={() => onNavigateToLeads()}
+              >
+                Open in Leads Pipeline ({discoveredLeads.length}) <ArrowUpRight />
+              </button>
+            )}
+          </div>
+
+          <div className="tavily-grid">
+            {discoveredLeads.map((lead, idx) => (
+              <article key={lead.id || idx} className="tavily-card">
+                <div className="tavily-card-head">
+                  <div>
+                    <h3 className="tavily-card-title">{lead.title}</h3>
+                    <div className="tavily-card-meta">
+                      <span className="tavily-badge">{lead.category}</span>
+                      {lead.review_rating && (
+                        <span>
+                          <Star weight="fill" color="#e49e22" size={13} />
+                          <strong>{lead.review_rating}</strong> ({lead.review_count || 0})
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <span className="tavily-badge score" title="Completeness score">
+                    {lead.lead_score}/100
+                  </span>
+                </div>
+
+                <div className="tavily-card-address">
+                  <MapPin size={16} />
+                  <span>{lead.address}</span>
+                </div>
+
+                <div className="tavily-card-contact">
+                  {lead.phone ? (
+                    <a href={`tel:${lead.phone}`} className="tavily-badge phone">
+                      <Phone size={13} /> {lead.phone}
+                    </a>
+                  ) : (
+                    <span className="muted" style={{ fontSize: "11px" }}>Phone: Not listed</span>
+                  )}
+                  {lead.website && (
+                    <a
+                      href={lead.website}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="tavily-badge"
+                    >
+                      <Globe size={13} /> Website
+                    </a>
+                  )}
+                </div>
+
+                <div className="tavily-pitch-box">
+                  <strong>Personalized Pitch Idea</strong>
+                  <p>{lead.proposed_idea}</p>
+                </div>
+
+                <div className="tavily-card-actions">
+                  {lead.google_maps_url && (
+                    <a
+                      href={lead.google_maps_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="compact"
+                    >
+                      <ArrowSquareOut size={14} /> Open in Google Maps
+                    </a>
+                  )}
+                  {onNavigateToLeads && (
+                    <button
+                      type="button"
+                      className="compact"
+                      onClick={() => onNavigateToLeads(lead.id)}
+                    >
+                      <Sparkle size={14} /> Draft pitch
+                    </button>
+                  )}
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
+    </>
+  );
 }

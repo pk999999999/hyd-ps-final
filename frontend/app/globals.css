@@ -15,3 +15,40 @@
 .sidebar.collapsed .profile{display:flex;justify-content:center}
 @media(max-width:850px){.app-shell.sidebar-collapsed{grid-template-columns:1fr}.sidebar-toggle{display:none}.sidebar.collapsed>.brand,.sidebar.collapsed .sidebar-label,.sidebar.collapsed .sidebar-city,.sidebar.collapsed .nav-label,.sidebar.collapsed .nav-count,.sidebar.collapsed .profile>span:nth-child(2),.sidebar.collapsed .profile>svg{display:initial}.sidebar.collapsed{padding:18px 22px 12px}.sidebar.collapsed nav{margin-top:20px}.sidebar.collapsed nav button{justify-content:flex-start;padding:10px;gap:11px}.sidebar.collapsed .profile{display:grid}}
 .lead-filter-hint{margin:12px 24px 0;font-size:12px}
+
+/* Tavily Live Discovery Styles */
+.tavily-search-panel{margin-bottom:24px}
+.tavily-form{display:grid;gap:18px;max-width:920px}
+.form-section-title{font-size:14px;font-weight:700;color:var(--ink);display:flex;align-items:center;gap:8px;margin:8px 0 2px}
+.tavily-inputs-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.tavily-location-card{background:var(--wash);border:1px solid #d4decb;border-radius:10px;padding:18px;display:grid;gap:12px}
+.tavily-location-header{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
+.tavily-location-header strong{font-size:13px;display:block}
+.tavily-location-header p{font-size:11px;color:var(--muted);margin:3px 0 0}
+.tavily-badge{display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:700;padding:4px 8px;border-radius:6px;background:#e5edd8;color:var(--green);border:1px solid #c9dac0}
+.tavily-badge.score{background:#fdf5e2;color:#856214;border-color:#ebd89e}
+.tavily-badge.maps{background:#e7f0fa;color:#1d5b96;border-color:#bed5ef}
+.tavily-badge.phone{background:#eaf6ee;color:#1f6b3b;border-color:#bde2cb}
+.tavily-results-header{padding:20px 24px;display:flex;align-items:center;justify-content:space-between;gap:16px;border-bottom:1px solid var(--line);background:#fafbf6;flex-wrap:wrap}
+.tavily-results-header h2{font-size:18px;font-weight:700;margin:0}
+.tavily-results-summary{font-size:12px;color:var(--muted);margin-top:3px}
+.tavily-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:18px;padding:22px}
+.tavily-card{background:var(--card);border:1px solid var(--line);border-radius:11px;padding:18px 20px;display:flex;flex-direction:column;gap:13px;box-shadow:0 3px 12px rgba(33,62,55,.03);transition:transform .15s,box-shadow .15s,border-color .15s}
+.tavily-card:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(33,62,55,.07);border-color:#cad4c4}
+.tavily-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.tavily-card-title{font-size:15px;font-weight:700;margin:0 0 4px;color:var(--ink);line-height:1.3}
+.tavily-card-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:11px;color:var(--muted)}
+.tavily-card-meta span{display:inline-flex;align-items:center;gap:4px}
+.tavily-card-address{display:flex;align-items:flex-start;gap:7px;font-size:11px;color:#596558;line-height:1.5}
+.tavily-card-address svg{flex-shrink:0;margin-top:2px;color:var(--green)}
+.tavily-card-contact{display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-size:11px}
+.tavily-card-contact a{display:inline-flex;align-items:center;gap:5px;font-weight:600;text-decoration:none;color:var(--green)}
+.tavily-card-contact a:hover{text-decoration:underline}
+.tavily-pitch-box{background:#f6f8f1;border:1px solid #dce4d3;border-radius:8px;padding:11px 13px;font-size:11px;line-height:1.55}
+.tavily-pitch-box strong{color:var(--orange);font-size:10px;text-transform:uppercase;letter-spacing:.07em;display:block;margin-bottom:3px}
+.tavily-pitch-box p{margin:0;color:#495648}
+.tavily-card-actions{display:flex;align-items:center;gap:8px;margin-top:auto;padding-top:12px;border-top:1px solid #eeefe5;flex-wrap:wrap}
+.tavily-card-actions a.compact,.tavily-card-actions button.compact{font-size:11px;min-height:34px;padding:6px 11px}
+.tavily-progress-banner{padding:16px 20px;background:#e9f2dc;border:1px solid #c9dbb3;border-radius:9px;display:flex;align-items:center;gap:12px;margin-top:14px;font-size:12px;color:var(--green)}
+@media(max-width:768px){.tavily-inputs-grid{grid-template-columns:1fr}.tavily-grid{grid-template-columns:1fr;padding:16px}}
+

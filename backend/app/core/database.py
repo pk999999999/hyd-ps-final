@@ -20,12 +20,42 @@ class Base(DeclarativeBase):
     pass
 
 
-# ── PostgreSQL (SQLAlchemy async) ──
+def normalize_database_url(raw_url: str) -> tuple[str, bool]:
+    url = raw_url.strip()
+    if url.startswith("postgres://"):
+        url = "postgresql+asyncpg://" + url[len("postgres://"):]
+    elif url.startswith("postgresql://"):
+        url = "postgresql+asyncpg://" + url[len("postgresql://"):]
 
+    use_ssl = False
+    from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
+    parsed = urlparse(url)
+    params = parse_qsl(parsed.query)
+    filtered = []
+    for k, v in params:
+        if k in ("sslmode", "ssl"):
+            if v.lower() not in ("disable", "false", "0"):
+                use_ssl = True
+            continue
+        elif k == "channel_binding":
+            continue
+        filtered.append((k, v))
+
+    clean_url = urlunparse(parsed._replace(query=urlencode(filtered)))
+    if "neon.tech" in parsed.netloc:
+        use_ssl = True
+    return clean_url, use_ssl
+
+
+db_url, use_ssl = normalize_database_url(settings.database_url)
 engine_options = {"pool_pre_ping": True}
-if not settings.database_url.startswith("sqlite"):
-    engine_options.update(pool_size=10, connect_args={"timeout": 5})
-engine = create_async_engine(settings.database_url, echo=False, **engine_options)
+if not db_url.startswith("sqlite"):
+    connect_args = {"timeout": 5}
+    if use_ssl:
+        connect_args["ssl"] = True
+    engine_options.update(pool_size=10, connect_args=connect_args)
+
+engine = create_async_engine(db_url, echo=False, **engine_options)
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 

@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HYD-PS2 Presentation - 4 Slide Deck</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Manrope:wght@600;700;800&family=Noto+Sans+Telugu:wght@600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --ink: #193c31;
+      --card-bg: #ffffff;
+      --page-bg: #f5f6ee;
+      --accent-green: #244c40;
+      --accent-orange: #b55836;
+      --accent-gold: #c68a18;
+      --muted: #647065;
+      --line: #dedfd4;
+      --wash: #edf2e4;
+      --shadow: 0 16px 40px rgba(25, 60, 49, 0.08);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'DM Sans', sans-serif;
+      background: var(--page-bg);
+      color: var(--ink);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    header {
+      padding: 14px 36px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #ffffff;
+      border-bottom: 1px solid var(--line);
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-family: 'Manrope', sans-serif;
+      font-weight: 800;
+      font-size: 18px;
+      letter-spacing: -0.03em;
+    }
+    .brand-mark {
+      background: var(--accent-green);
+      color: #fff;
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      font-size: 20px;
+      font-weight: 800;
+    }
+    .deck-info {
+      font-size: 13px;
+      color: var(--muted);
+      font-weight: 500;
+    }
+    .controls {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .btn {
+      background: var(--wash);
+      border: 1px solid var(--line);
+      color: var(--ink);
+      font-weight: 700;
+      font-size: 12px;
+      padding: 8px 16px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn:hover:not(:disabled) {
+      background: var(--accent-green);
+      color: #fff;
+      border-color: var(--accent-green);
+    }
+    .btn:disabled { opacity: 0.35; cursor: not-allowed; }
+    
+    .slide-viewport {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 30px;
+      position: relative;
+    }
+    .slide {
+      background: var(--card-bg);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      width: 100%;
+      max-width: 1220px;
+      height: 100%;
+      max-height: 720px;
+      padding: 48px 56px;
+      display: none;
+      flex-direction: column;
+      box-shadow: var(--shadow);
+      position: relative;
+      animation: fadeIn 0.3s ease-out forwards;
+    }
+    .slide.active { display: flex; }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .slide-header {
+      margin-bottom: 24px;
+    }
+    .eyebrow {
+      font-size: 11px;
+      font-weight: 800;
+      color: var(--accent-orange);
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+    .slide-title {
+      font-family: 'Manrope', sans-serif;
+      font-size: 32px;
+      font-weight: 800;
+      color: var(--ink);
+      letter-spacing: -0.035em;
+      line-height: 1.25;
+    }
+    .slide-subtitle {
+      font-size: 15px;
+      color: var(--muted);
+      margin-top: 6px;
+    }
+
+    /* Grid Layouts */
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 28px;
+      flex: 1;
+      min-height: 0;
+    }
+    .grid-3 {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 22px;
+      flex: 1;
+      min-height: 0;
+    }
+    .grid-4 {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 18px;
+      flex: 1;
+      min-height: 0;
+    }
+
+    .card {
+      background: #fafbf7;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+    }
+    .card-highlight {
+      background: var(--wash);
+      border-color: #cbd8c0;
+    }
+    .card h3 {
+      font-family: 'Manrope', sans-serif;
+      font-size: 17px;
+      font-weight: 700;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--ink);
+    }
+    .badge {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 5px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .badge-orange { background: #fbeee6; color: var(--accent-orange); }
+    .badge-green { background: #e5f1db; color: var(--accent-green); }
+    .badge-blue { background: #e6f0fa; color: #1c5e9b; }
+
+    ul.bullet-list {
+      list-style: none;
+      display: grid;
+      gap: 12px;
+      margin-top: 8px;
+      font-size: 13.5px;
+      line-height: 1.55;
+    }
+    ul.bullet-list li {
+      position: relative;
+      padding-left: 20px;
+      color: #3b4b3e;
+    }
+    ul.bullet-list li::before {
+      content: "•";
+      position: absolute;
+      left: 0;
+      color: var(--accent-green);
+      font-size: 20px;
+      line-height: 1;
+      top: -2px;
+    }
+    ul.bullet-list li strong {
+      color: var(--ink);
+    }
+
+    .step-flow {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-top: 6px;
+    }
+    .step-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+      background: #ffffff;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 12px 16px;
+    }
+    .step-number {
+      background: var(--accent-green);
+      color: #ffffff;
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      font-size: 11px;
+      font-weight: 800;
+      flex-shrink: 0;
+    }
+    .step-content h4 {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--ink);
+      margin-bottom: 2px;
+    }
+    .step-content p {
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.4;
+    }
+
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+      margin-top: 18px;
+    }
+    .stat-box {
+      background: #ffffff;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 16px;
+      text-align: center;
+    }
+    .stat-number {
+      font-family: 'Manrope', sans-serif;
+      font-size: 28px;
+      font-weight: 800;
+      color: var(--accent-green);
+      letter-spacing: -0.03em;
+    }
+    .stat-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-top: 2px;
+    }
+
+    .slide-footer {
+      margin-top: 20px;
+      padding-top: 14px;
+      border-top: 1px solid var(--line);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .speaker-note-hint {
+      background: #fff8ee;
+      border: 1px solid #f3dec2;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 11.5px;
+      color: #8c5d19;
+      margin-top: 14px;
+      line-height: 1.5;
+    }
+    .speaker-note-hint strong {
+      color: var(--accent-orange);
+    }
+
+    /* Print styles for converting to PDF / PPT */
+    @media print {
+      body { overflow: visible; height: auto; background: #fff; }
+      header { display: none; }
+      .slide-viewport { padding: 0; display: block; }
+      .slide {
+        display: flex !important;
+        page-break-after: always;
+        max-height: none;
+        height: 100vh;
+        border: none;
+        box-shadow: none;
+        border-radius: 0;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="brand">
+      <div class="brand-mark">H</div>
+      <span>HYD-PS2 <span style="font-weight: 400; color: var(--muted); font-size: 14px;">| Pitch Deck</span></span>
+    </div>
+    <div class="deck-info">Judges Presentation • 4 Slides</div>
+    <div class="controls">
+      <button class="btn" id="prevBtn" onclick="prevSlide()">◀ Previous</button>
+      <span id="slideIndicator" style="font-size: 12px; font-weight: 700; padding: 0 8px;">1 / 4</span>
+      <button class="btn" id="nextBtn" onclick="nextSlide()">Next ▶</button>
+      <button class="btn" onclick="window.print()" style="margin-left: 12px; background: var(--accent-green); color: #fff;">Print / Save PDF</button>
+    </div>
+  </header>
+
+  <main class="slide-viewport">
+
+    <!-- SLIDE 1 -->
+    <section class="slide active" id="slide1">
+      <div class="slide-header">
+        <p class="eyebrow">HYDERABAD GROWTH DESK • EXECUTIVE SUMMARY</p>
+        <h1 class="slide-title">HYD-PS2: Hyper-Local AI Growth Desk & Client Portal</h1>
+        <p class="slide-subtitle">AI-assisted business discovery, multi-agent proposal synthesis, and human-in-the-loop relationship building.</p>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <span class="badge badge-orange" style="margin-bottom: 12px; width: fit-content;">The Problem</span>
+          <h3>Cold Outreach to Local Businesses is Broken</h3>
+          <ul class="bullet-list">
+            <li><strong>Stale, Generic Lead Lists:</strong> Buying outdated directory dumps leads to high bounce rates and immediate spam reporting.</li>
+            <li><strong>6+ Hours of Daily Manual Scraping:</strong> Operators manually copy-pasting addresses and numbers from Google Maps.</li>
+            <li><strong>Irrelevant, Hallucinated Pitches:</strong> Autonomous AI bots sending hallucinated claims without human verification, destroying credibility.</li>
+          </ul>
+        </div>
+
+        <div class="card card-highlight">
+          <span class="badge badge-green" style="margin-bottom: 12px; width: fit-content;">The Solution</span>
+          <h3>Hyper-Localized Intelligence with Human Approval</h3>
+          <ul class="bullet-list">
+            <li><strong>Live Geolocation + Tavily Maps Engine:</strong> Instantly finds top 15–20 active businesses using real GPS coordinates and Google Maps citations in seconds.</li>
+            <li><strong>LangGraph Multi-Agent Architecture:</strong> Research → Scout → Critic agents formulate concrete, contextual service ideas.</li>
+            <li><strong>Human Checkpoint Guarantee:</strong> Every outreach is reviewed, edited, and approved. Zero autonomous spam.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="stats-row">
+        <div class="stat-box">
+          <div class="stat-number">0</div>
+          <div class="stat-label">Brittle Scrapers Needed</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-number">&lt; 3s</div>
+          <div class="stat-label">Discovery & Entity Resolution</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-number">100%</div>
+          <div class="stat-label">Human-Approved Outreach</div>
+        </div>
+      </div>
+
+      <div class="slide-footer">
+        <span>Slide 1 of 4 • Problem & Value Proposition</span>
+        <span>Keyboard: Use Left / Right arrows to navigate</span>
+      </div>
+    </section>
+
+    <!-- SLIDE 2 -->
+    <section class="slide" id="slide2">
+      <div class="slide-header">
+        <p class="eyebrow">INNOVATION & DATA ENGINE</p>
+        <h1 class="slide-title">Real-Time Discovery: No Scrapers, Pure Intelligence</h1>
+        <p class="slide-subtitle">Powered by browser geolocation, OpenStreetMap geocoding, and Tavily's advanced Google Maps entity engine.</p>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <h3>The 2-Minute Discovery Workflow</h3>
+          <div class="step-flow">
+            <div class="step-item">
+              <div class="step-number">1</div>
+              <div class="step-content">
+                <h4>Browser Live Location</h4>
+                <p>One-click GPS coordinate capture (±15m accuracy) + Reverse-geocoding into specific localities (e.g., Banjara Hills, Ameerpet).</p>
+              </div>
+            </div>
+            <div class="step-item">
+              <div class="step-number">2</div>
+              <div class="step-content">
+                <h4>Two Intent Inputs</h4>
+                <p>1. <em>"What's your service?"</em> (e.g. 24/7 Voice Receptionist)<br>2. <em>"Who are your clients?"</em> (e.g. Hair Salons & Spas)</p>
+              </div>
+            </div>
+            <div class="step-item">
+              <div class="step-number">3</div>
+              <div class="step-content">
+                <h4>Tavily & Google Maps Search</h4>
+                <p>Advanced semantic search queries citations, filtering out forums and noise, retrieving 15–20 high-fidelity business entities.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card card-highlight">
+          <h3>Rich Structured Entity Data</h3>
+          <ul class="bullet-list">
+            <li><strong>Verified Business Profile:</strong> Real business title, category, physical address with pin, and website.</li>
+            <li><strong>Direct Contact Details:</strong> One-click dial phone numbers (<code>+91...</code>) and verified public email.</li>
+            <li><strong>Social Proof & Reputation:</strong> Google review star rating (★ 4.5) and review volume count.</li>
+            <li><strong>Direct Navigation:</strong> Instant <em>"Open in Google Maps"</em> links with place IDs.</li>
+            <li><strong>Personalized Pitch Generation:</strong> Tailored proposition matching the operator's service to the target's operating model.</li>
+            <li><strong>Instant Pipeline Ingestion:</strong> Discovered leads automatically sync to PostgreSQL database with deduplication.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="speaker-note-hint">
+        <strong>💡 Key Judge Takeaway:</strong> We eliminated brittle Puppeteer/Selenium scrapers that break on UI updates. Tavily provides resilient, API-first search that scales cleanly in production.
+      </div>
+
+      <div class="slide-footer">
+        <span>Slide 2 of 4 • Discovery Engine & Data Pipeline</span>
+        <span>HYD-PS2 Platform Architecture</span>
+      </div>
+    </section>
+
+    <!-- SLIDE 3 -->
+    <section class="slide" id="slide3">
+      <div class="slide-header">
+        <p class="eyebrow">AGENTIC SYSTEM & GOVERNANCE</p>
+        <h1 class="slide-title">Multi-Agent LangGraph Pipeline & Human Checkpoints</h1>
+        <p class="slide-subtitle">Deterministic state machines with PostgreSQL checkpoints and few-shot in-context learning.</p>
+      </div>
+
+      <div class="grid-3">
+        <div class="card">
+          <span class="badge badge-blue" style="margin-bottom: 8px; width: fit-content;">Phase 1</span>
+          <h3>Scout & Critic Agents</h3>
+          <ul class="bullet-list">
+            <li><strong>Research Node:</strong> Evaluates digital footprint, citations, and reviews.</li>
+            <li><strong>Scout Agent:</strong> Synthesizes specific bottleneck hypotheses & value hooks.</li>
+            <li><strong>Critic Agent:</strong> Audits pitch tone, verifies feasibility, strips pushy jargon.</li>
+          </ul>
+        </div>
+
+        <div class="card card-highlight">
+          <span class="badge badge-orange" style="margin-bottom: 8px; width: fit-content;">Phase 2</span>
+          <h3>Durable Human Interrupt</h3>
+          <ul class="bullet-list">
+            <li><strong>LangGraph Checkpoint:</strong> Execution interrupts before send; state saved in PostgreSQL.</li>
+            <li><strong>Operator Decision:</strong> Approve, edit copy, or reject proposal.</li>
+            <li><strong>Safety & Compliance:</strong> AI disclosure, HMAC-signed one-click opt-out, permanent suppression list.</li>
+          </ul>
+        </div>
+
+        <div class="card">
+          <span class="badge badge-green" style="margin-bottom: 8px; width: fit-content;">Phase 3</span>
+          <h3>Self-Correcting Memory</h3>
+          <ul class="bullet-list">
+            <li><strong>In-Context Learning:</strong> Operator feedback & diffs stored in MongoDB memory.</li>
+            <li><strong>Few-Shot Demonstrations:</strong> Past decisions injected into prompt context.</li>
+            <li><strong>Zero Retraining Cost:</strong> Adapts tone dynamically without fine-tuning risks.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="speaker-note-hint">
+        <strong>💡 Key Judge Takeaway:</strong> The human checkpoint guarantees safety. PostgreSQL durable checkpoints ensure that workflows survive system restarts without losing state.
+      </div>
+
+      <div class="slide-footer">
+        <span>Slide 3 of 4 • Multi-Agent Graph & Checkpoints</span>
+        <span>LangGraph • PostgreSQL • MongoDB Memory</span>
+      </div>
+    </section>
+
+    <!-- SLIDE 4 -->
+    <section class="slide" id="slide4">
+      <div class="slide-header">
+        <p class="eyebrow">FULL-STACK EXECUTION & ROADMAP</p>
+        <h1 class="slide-title">Full-Stack Ecosystem: Voice Agents & Client Portal</h1>
+        <p class="slide-subtitle">End-to-end integration connecting initial discovery directly to signed client intake.</p>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <h3>Integrated Client Experience</h3>
+          <ul class="bullet-list">
+            <li><strong>7-Day Signed Client Invitations:</strong> One-click secure tokenized link sent to prospective business.</li>
+            <li><strong>Dedicated Client Portal:</strong> Business owner accesses a clean dashboard to review recommendations, request appointments, or chat.</li>
+            <li><strong>ElevenLabs Conversational Voice:</strong> WebRTC conversational voice assistant for both operator pipeline analysis and client service intake.</li>
+            <li><strong>Multi-Channel Dispatch:</strong> Email via Resend with audit trails + SMS gateway via Textbee Android integration.</li>
+          </ul>
+        </div>
+
+        <div class="card card-highlight">
+          <h3>Production Technology Stack</h3>
+          <ul class="bullet-list">
+            <li><strong>Frontend:</strong> Next.js 16 (Turbopack), React 19, TypeScript, Phosphor Icons, Responsive CSS.</li>
+            <li><strong>Backend API:</strong> FastAPI (Async/Await), Python 3.13, Uvicorn, Alembic.</li>
+            <li><strong>Data & Storage:</strong> PostgreSQL 16 (Relational + Graph Checkpoints), MongoDB (Memory & Chat), Redis (Pub/Sub & WebSocket).</li>
+            <li><strong>AI Models:</strong> OpenRouter (LLM Reasoning), Tavily API (Search & Maps), ElevenLabs (Voice).</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="stats-row">
+        <div class="stat-box">
+          <div class="stat-number">End-to-End</div>
+          <div class="stat-label">Discovery to Client Intake</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-number">CAN-SPAM</div>
+          <div class="stat-label">Compliant by Design</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-number">Production</div>
+          <div class="stat-label">Deployed on Render + Next.js</div>
+        </div>
+      </div>
+
+      <div class="slide-footer">
+        <span>Slide 4 of 4 • System Architecture & Client Portal</span>
+        <span>HYD-PS2 • Thank you!</span>
+      </div>
+    </section>
+
+  </main>
+
+  <script>
+    let currentSlide = 1;
+    const totalSlides = 4;
+
+    function updateSlide() {
+      for (let i = 1; i <= totalSlides; i++) {
+        const el = document.getElementById('slide' + i);
+        if (el) el.classList.toggle('active', i === currentSlide);
+      }
+      document.getElementById('slideIndicator').textContent = `${currentSlide} / ${totalSlides}`;
+      document.getElementById('prevBtn').disabled = currentSlide === 1;
+      document.getElementById('nextBtn').disabled = currentSlide === totalSlides;
+    }
+
+    function prevSlide() {
+      if (currentSlide > 1) { currentSlide--; updateSlide(); }
+    }
+    function nextSlide() {
+      if (currentSlide < totalSlides) { currentSlide++; updateSlide(); }
+    }
+
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowRight' || e.key === ' ') { nextSlide(); }
+      if (e.key === 'ArrowLeft') { prevSlide(); }
+    });
+  </script>
+</body>
+</html>
